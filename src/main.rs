@@ -1,30 +1,31 @@
-mod detector;
 mod render;
-mod tracking;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use detector::YoloV8Detector;
 use opencv::{
     highgui,
     prelude::*,
     videoio::{self, VideoCapture},
 };
 use render::FrameMetrics;
-use tracking::{FrameClock, FrameStamp, TimeSource, TrackState, Tracker};
+use vision_engine::detector::YoloV8Detector;
+use vision_engine::tracking::{FrameClock, FrameStamp, TimeSource, TrackState, Tracker};
 
 const DEFAULT_MODEL_PATH: &str = "models/yolov8n.onnx";
 const DEFAULT_LOG_FILTER: &str = "info,ort=warn";
 const WINDOW_NAME: &str = "vision-engine";
 const MIN_FPS_WINDOW: Duration = Duration::from_secs(1);
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(1);
+const FALLBACK_FRAME_INTERVAL_MS: f64 = 1000.0 / 30.0;
 
 #[derive(Debug)]
 struct Config {
     video: PathBuf,
     model: PathBuf,
+    loop_for: Option<Duration>,
 }
 
 #[derive(Debug)]
@@ -113,6 +114,7 @@ fn print_usage() {
          \n\
          \x20 <video>          Path to a local video file (required)\n\
          \x20 --model <path>   Path to ONNX model (default: {DEFAULT_MODEL_PATH})\n\
+         \x20 --loop-for-seconds <n>  Replay input until n seconds have elapsed\n\
          \x20 -h, --help       Show this help"
     );
 }
@@ -132,12 +134,27 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParseOutcome> 
 
     let mut video: Option<PathBuf> = None;
     let mut model: Option<PathBuf> = None;
+    let mut loop_for = None;
     let mut iter = args.iter();
 
     while let Some(arg) = iter.next() {
         if arg == "--model" {
             let value = iter.next().context("missing value for option: --model")?;
             model = Some(PathBuf::from(value));
+            continue;
+        }
+
+        if arg == "--loop-for-seconds" {
+            let value = iter
+                .next()
+                .context("missing value for option: --loop-for-seconds")?;
+            let seconds = value.to_string_lossy().parse::<u64>().context(
+                "invalid value for option: --loop-for-seconds (expected positive integer)",
+            )?;
+            if seconds == 0 {
+                bail!("invalid value for option: --loop-for-seconds (expected positive integer)");
+            }
+            loop_for = Some(Duration::from_secs(seconds));
             continue;
         }
 
@@ -155,7 +172,11 @@ fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<ParseOutcome> 
     let video = video.context("missing required argument: <video>")?;
     let model = model.unwrap_or_else(|| PathBuf::from(DEFAULT_MODEL_PATH));
 
-    Ok(ParseOutcome::Run(Config { video, model }))
+    Ok(ParseOutcome::Run(Config {
+        video,
+        model,
+        loop_for,
+    }))
 }
 
 fn validate_config(config: &Config) -> Result<()> {
@@ -203,6 +224,13 @@ fn read_capture_fps(capture: &mut VideoCapture) -> Result<Option<f64>> {
 fn read_capture_pos_msec(capture: &mut VideoCapture) -> Result<Option<f64>> {
     let pos_msec = capture.get(videoio::CAP_PROP_POS_MSEC)?;
     Ok(sanitize_capture_f64(pos_msec))
+}
+
+fn frame_interval_ms(source_fps: Option<f64>) -> f64 {
+    source_fps
+        .filter(|fps| fps.is_finite() && *fps > 0.0)
+        .map(|fps| 1000.0 / fps)
+        .unwrap_or(FALLBACK_FRAME_INTERVAL_MS)
 }
 
 #[derive(Debug, Default)]
@@ -306,8 +334,18 @@ fn run_playback(config: &Config) -> Result<()> {
         let mut provenance_counts = ProvenanceCounts::default();
         let mut last_stamp = None;
         let mut tracker = Tracker::new();
+        let run_started = Instant::now();
+        let mut last_progress_log = None;
+        let mut media_offset_ms = 0.0;
 
         loop {
+            if config
+                .loop_for
+                .is_some_and(|limit| run_started.elapsed() >= limit)
+            {
+                break;
+            }
+
             let decode_start = Instant::now();
             let read_ok = capture
                 .read(&mut frame)
@@ -320,21 +358,45 @@ fn run_playback(config: &Config) -> Result<()> {
                 frame_clock.stamped_count() as u32,
             ) {
                 PlaybackFrameOutcome::Continue => {}
-                PlaybackFrameOutcome::EndOfVideo => break,
+                PlaybackFrameOutcome::EndOfVideo => {
+                    if config.loop_for.is_none() {
+                        break;
+                    }
+                    let rewound = capture
+                        .set(videoio::CAP_PROP_POS_FRAMES, 0.0)
+                        .context("failed to rewind video for sustained run")?;
+                    if !rewound {
+                        bail!("failed to rewind video for sustained run: backend rejected seek");
+                    }
+                    media_offset_ms = last_stamp
+                        .map(|stamp: FrameStamp| stamp.media_ms + frame_interval_ms(source_fps))
+                        .unwrap_or(media_offset_ms);
+                    continue;
+                }
                 PlaybackFrameOutcome::Undecodable => {
                     bail!("video file could not be decoded: {video_path}");
                 }
             }
 
-            let reported_ms = read_capture_pos_msec(&mut capture)?;
+            let reported_ms = read_capture_pos_msec(&mut capture)?
+                .map(|position_ms| position_ms + media_offset_ms);
             let stamp = frame_clock.stamp(reported_ms);
+            if stamp.source != TimeSource::Reported {
+                tracing::info!(
+                    frame_index = stamp.index,
+                    source = ?stamp.source,
+                    "tracking timestamp unavailable; using deterministic fallback"
+                );
+            }
             provenance_counts.record(stamp.source);
             last_stamp = Some(stamp);
 
             let inference_result = detector.infer(&frame)?;
 
             let tracking_start = Instant::now();
-            let tracks = tracker.update(&inference_result.detections, stamp);
+            let tracks = tracker
+                .try_update(&inference_result.detections, stamp)
+                .with_context(|| format!("tracking update failed at frame {}", stamp.index))?;
             let tracking_ms = tracking_start.elapsed().as_secs_f64() * 1000.0;
 
             let now = Instant::now();
@@ -345,6 +407,19 @@ fn run_playback(config: &Config) -> Result<()> {
                 .iter()
                 .filter(|track| track.state == TrackState::Confirmed)
                 .count();
+
+            if last_progress_log
+                .is_none_or(|last| now.duration_since(last) >= PROGRESS_LOG_INTERVAL)
+            {
+                tracing::info!(
+                    elapsed_seconds = run_started.elapsed().as_secs_f64(),
+                    frame_count = stamp.index + 1,
+                    live_tracks = tracker.live_track_count(),
+                    confirmed_tracks,
+                    "tracking progress"
+                );
+                last_progress_log = Some(now);
+            }
 
             render::draw_tracks(&mut frame, &tracks).context("failed to draw track overlays")?;
             render::draw_metrics_overlay(
@@ -446,6 +521,22 @@ mod tests {
     }
 
     #[test]
+    fn loop_duration_is_parsed() {
+        let outcome = parse_args(os_args(&["clip.mp4", "--loop-for-seconds", "720"]))
+            .expect("parse should succeed");
+        let ParseOutcome::Run(config) = outcome else {
+            panic!("expected Run outcome");
+        };
+        assert_eq!(config.loop_for, Some(Duration::from_secs(720)));
+    }
+
+    #[test]
+    fn zero_loop_duration_is_an_error() {
+        let err = parse_args(os_args(&["clip.mp4", "--loop-for-seconds", "0"]));
+        assert!(err.is_err());
+    }
+
+    #[test]
     fn missing_video_is_an_error() {
         let err = parse_args(os_args(&[])).expect_err("parse should fail");
         assert!(err.to_string().contains("<video>"));
@@ -480,6 +571,7 @@ mod tests {
         let config = Config {
             video: video.clone(),
             model: model.clone(),
+            loop_for: None,
         };
 
         validate_config(&config).expect("validation should succeed");
@@ -496,6 +588,7 @@ mod tests {
         let config = Config {
             video: missing_video.clone(),
             model,
+            loop_for: None,
         };
 
         let err = validate_config(&config).expect_err("validation should fail");
@@ -522,6 +615,7 @@ mod tests {
         let config = Config {
             video: video_dir,
             model,
+            loop_for: None,
         };
 
         let err = validate_config(&config).expect_err("validation should fail");
@@ -539,6 +633,7 @@ mod tests {
         let config = Config {
             video,
             model: missing_model.clone(),
+            loop_for: None,
         };
 
         let err = validate_config(&config).expect_err("validation should fail");
@@ -608,6 +703,16 @@ mod tests {
             .expect("second window should produce fps");
         assert!((second_fps - 20.0).abs() < 0.1);
         assert!((second_fps - first_fps).abs() < 0.1);
+    }
+
+    #[test]
+    fn frame_interval_uses_source_fps_when_available() {
+        assert!((frame_interval_ms(Some(25.0)) - 40.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn frame_interval_uses_nominal_fallback_when_source_fps_is_missing() {
+        assert!((frame_interval_ms(None) - FALLBACK_FRAME_INTERVAL_MS).abs() < f64::EPSILON);
     }
 
     #[test]

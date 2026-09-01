@@ -1,3 +1,5 @@
+use anyhow::{Result, bail};
+
 use crate::detector::Detection;
 use crate::tracking::assignment::associate;
 use crate::tracking::clock::FrameStamp;
@@ -16,6 +18,12 @@ pub struct Tracker {
     rejected_updates: u64,
     #[cfg(test)]
     test_force_reject_update_for: Option<TrackId>,
+}
+
+impl Default for Tracker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Tracker {
@@ -42,6 +50,33 @@ impl Tracker {
 
     pub fn rejected_updates(&self) -> u64 {
         self.rejected_updates
+    }
+
+    /// Validates input that originates outside the tracker before updating state.
+    /// Rejected Kalman updates remain recoverable operating conditions and are
+    /// reported from `update` as diagnostics rather than errors.
+    pub fn try_update(
+        &mut self,
+        detections: &[Detection],
+        stamp: FrameStamp,
+    ) -> Result<Vec<Track>> {
+        if !stamp.media_ms.is_finite() || stamp.media_ms < 0.0 {
+            bail!(
+                "tracking timestamp unusable at frame {}: media time must be finite and non-negative",
+                stamp.index
+            );
+        }
+
+        for (detection_index, detection) in detections.iter().enumerate() {
+            if !detection.confidence.is_finite() || !detection.bbox.is_valid() {
+                bail!(
+                    "tracking association failed at frame {}: invalid detection at index {detection_index}",
+                    stamp.index
+                );
+            }
+        }
+
+        Ok(self.update(detections, stamp))
     }
 
     pub fn update(&mut self, detections: &[Detection], stamp: FrameStamp) -> Vec<Track> {
@@ -90,9 +125,15 @@ impl Tracker {
                 UpdateOutcome::Applied => {
                     entry.track.bbox = entry.filter.bbox();
                 }
-                UpdateOutcome::Rejected(_) => {
+                UpdateOutcome::Rejected(reason) => {
                     entry.track.bbox = predicted_box;
                     self.rejected_updates += 1;
+                    tracing::warn!(
+                        frame_index = stamp.index,
+                        ?reason,
+                        track_id = entry.track.id.0,
+                        "tracking filter update rejected; retaining predicted state"
+                    );
                 }
             }
 
