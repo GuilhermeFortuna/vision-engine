@@ -46,6 +46,20 @@ Do not infer milestone progression or begin follow-up work unless explicitly req
 
 ---
 
+## VE Tasks
+
+When working on a numbered Vision Engine task (`VE-...`):
+
+1. Identify the task from its spec or plan under `docs/development/specs/` or `docs/development/plans/`.
+2. Create and use a dedicated git branch named after that document (filename without `.md`).
+   - Example: for `docs/development/specs/VE-006-tracking-domain-and-frame-timestamps-spec.md`, use branch `VE-006-tracking-domain-and-frame-timestamps-spec`.
+3. Do all implementation work for that task on that branch.
+4. Do not mix changes from different `VE-...` tasks on the same branch.
+
+Create the branch before making changes if it does not already exist.
+
+---
+
 
 
 ## Primary Stack
@@ -249,6 +263,8 @@ Avoid:
 
 
 ## Git Discipline
+
+For `VE-...` tasks, use one branch per task named after the task document (see **VE Tasks** above).
 
 Keep commits focused on one logical change.
 
