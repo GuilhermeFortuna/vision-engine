@@ -3,3 +3,5 @@ samples/test.mp4
 models/*.onnx
 models/*.pt
 .venv-export/
+__pycache__/
+*.pyc
