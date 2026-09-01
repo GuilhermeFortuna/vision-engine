@@ -228,7 +228,27 @@ Vision Engine is developed iteratively through vertical, verifiable milestones:
 
 ## 🔧 Development & Validation
 
-All contributions must adhere to strict quality and testing standards:
+All contributions must adhere to strict quality and testing standards.
+
+### CI & Git Hooks
+
+Run the full CI pipeline locally:
+
+```bash
+./ci.sh
+```
+
+Install git hooks once per clone (pre-commit runs lint; pre-push runs full CI):
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+GitHub Actions runs the same `./ci.sh` script on every push and pull request.
+
+### Manual validation
+
+You can also run individual checks:
 
 ```bash
 # Fast compilation check
