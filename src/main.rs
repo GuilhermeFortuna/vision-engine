@@ -13,7 +13,7 @@ use opencv::{
     prelude::*,
     videoio::{self, VideoCapture},
 };
-use tracking::{FrameClock, FrameStamp, TimeSource};
+use tracking::{FrameClock, FrameStamp, TimeSource, Track, Tracker};
 
 const DEFAULT_MODEL_PATH: &str = "models/yolov8n.onnx";
 const DEFAULT_LOG_FILTER: &str = "info,ort=warn";
@@ -474,6 +474,7 @@ fn run_playback(config: &Config) -> Result<()> {
         let mut frame_clock = FrameClock::new(source_fps);
         let mut provenance_counts = ProvenanceCounts::default();
         let mut last_stamp = None;
+        let mut tracker = Tracker::new();
 
         loop {
             let decode_start = Instant::now();
@@ -500,6 +501,10 @@ fn run_playback(config: &Config) -> Result<()> {
             last_stamp = Some(stamp);
 
             let inference_result = detector.infer(&frame)?;
+
+            let tracking_start = Instant::now();
+            let _tracks: Vec<Track> = tracker.update(&inference_result.detections, stamp);
+            let _tracking_ms = tracking_start.elapsed().as_secs_f64() * 1000.0;
 
             let now = Instant::now();
             rolling_fps.record_frame(now.duration_since(last_iteration_end));
