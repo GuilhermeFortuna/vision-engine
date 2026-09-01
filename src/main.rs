@@ -1,4 +1,5 @@
 mod detector;
+mod tracking;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -12,6 +13,7 @@ use opencv::{
     prelude::*,
     videoio::{self, VideoCapture},
 };
+use tracking::{FrameClock, FrameStamp, TimeSource};
 
 const DEFAULT_MODEL_PATH: &str = "models/yolov8n.onnx";
 const DEFAULT_LOG_FILTER: &str = "info,ort=warn";
@@ -186,6 +188,62 @@ fn video_path_for_opencv(path: &Path) -> Result<&str> {
         .with_context(|| format!("video path is not valid UTF-8: {}", path.display()))
 }
 
+fn sanitize_capture_f64(value: f64) -> Option<f64> {
+    if value.is_finite() && value >= 0.0 {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+fn read_capture_fps(capture: &mut VideoCapture) -> Result<Option<f64>> {
+    let fps = capture.get(videoio::CAP_PROP_FPS)?;
+    Ok(match fps {
+        value if value.is_finite() && value > 0.0 => Some(value),
+        _ => None,
+    })
+}
+
+fn read_capture_pos_msec(capture: &mut VideoCapture) -> Result<Option<f64>> {
+    let pos_msec = capture.get(videoio::CAP_PROP_POS_MSEC)?;
+    Ok(sanitize_capture_f64(pos_msec))
+}
+
+#[derive(Debug, Default)]
+struct ProvenanceCounts {
+    reported: u64,
+    derived_from_frame_rate: u64,
+    derived_from_index: u64,
+}
+
+impl ProvenanceCounts {
+    fn record(&mut self, source: TimeSource) {
+        match source {
+            TimeSource::Reported => self.reported += 1,
+            TimeSource::DerivedFromFrameRate => self.derived_from_frame_rate += 1,
+            TimeSource::DerivedFromIndex => self.derived_from_index += 1,
+        }
+    }
+}
+
+fn log_playback_summary(
+    last_stamp: Option<FrameStamp>,
+    frame_count: u64,
+    provenance: &ProvenanceCounts,
+    adjustments: u64,
+) {
+    let media_ms = last_stamp.map(|stamp| stamp.media_ms).unwrap_or(0.0);
+    tracing::info!(
+        frames = frame_count,
+        media_ms,
+        reported = provenance.reported,
+        derived_fps = provenance.derived_from_frame_rate,
+        derived_index = provenance.derived_from_index,
+        adjustments,
+        "playback complete"
+    );
+}
+
 fn open_video_capture(path: &Path) -> Result<VideoCapture> {
     let path = video_path_for_opencv(path)?;
     let capture = VideoCapture::from_file(path, videoio::CAP_ANY)
@@ -294,10 +352,10 @@ fn draw_detections(frame: &mut Mat, detections: &[Detection]) -> Result<()> {
             confidence = detection.confidence
         );
 
-        let x_min = detection.x_min.round() as i32;
-        let y_min = detection.y_min.round() as i32;
-        let x_max = detection.x_max.round() as i32;
-        let y_max = detection.y_max.round() as i32;
+        let x_min = detection.bbox.x_min.round() as i32;
+        let y_min = detection.bbox.y_min.round() as i32;
+        let x_max = detection.bbox.x_max.round() as i32;
+        let y_max = detection.bbox.y_max.round() as i32;
 
         let box_left = x_min.clamp(0, frame_w);
         let box_top = y_min.clamp(0, frame_h);
@@ -404,6 +462,7 @@ fn run_playback(config: &Config) -> Result<()> {
     // without depending on a decodable input, which keeps startup tests asset-free.
     let mut detector = YoloV8Detector::load(&config.model)?;
     let mut capture = open_video_capture(&config.video)?;
+    let source_fps = read_capture_fps(&mut capture)?;
     highgui::named_window(WINDOW_NAME, highgui::WINDOW_AUTOSIZE)
         .context("failed to create display window")?;
 
@@ -412,7 +471,9 @@ fn run_playback(config: &Config) -> Result<()> {
         let mut frame = Mat::default();
         let mut rolling_fps = RollingFps::new();
         let mut last_iteration_end = Instant::now();
-        let mut frames_decoded = 0_u32;
+        let mut frame_clock = FrameClock::new(source_fps);
+        let mut provenance_counts = ProvenanceCounts::default();
+        let mut last_stamp = None;
 
         loop {
             let decode_start = Instant::now();
@@ -421,13 +482,22 @@ fn run_playback(config: &Config) -> Result<()> {
                 .context("failed to read video frame")?;
             let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
 
-            match classify_playback_frame(read_ok, frame.empty(), frames_decoded) {
+            match classify_playback_frame(
+                read_ok,
+                frame.empty(),
+                frame_clock.stamped_count() as u32,
+            ) {
                 PlaybackFrameOutcome::Continue => {}
                 PlaybackFrameOutcome::EndOfVideo => break,
                 PlaybackFrameOutcome::Undecodable => {
                     bail!("video file could not be decoded: {video_path}");
                 }
             }
+
+            let reported_ms = read_capture_pos_msec(&mut capture)?;
+            let stamp = frame_clock.stamp(reported_ms);
+            provenance_counts.record(stamp.source);
+            last_stamp = Some(stamp);
 
             let inference_result = detector.infer(&frame)?;
 
@@ -450,9 +520,14 @@ fn run_playback(config: &Config) -> Result<()> {
             if should_exit(key) {
                 break;
             }
-
-            frames_decoded += 1;
         }
+
+        log_playback_summary(
+            last_stamp,
+            frame_clock.stamped_count(),
+            &provenance_counts,
+            frame_clock.adjustments(),
+        );
 
         Ok(())
     })();

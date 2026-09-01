@@ -13,6 +13,8 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::value::{Outlet, Shape, Tensor, TensorElementType, ValueType};
 use ort::{inputs, value::DynValue};
 
+use crate::tracking::BBox;
+
 const INPUT_SIZE: i32 = 640;
 const PAD_VALUE: u8 = 114;
 const INPUT_SHAPE: [i64; 4] = [1, 3, 640, 640];
@@ -118,10 +120,7 @@ pub struct LetterboxTransform {
 pub struct Detection {
     pub class_id: u32,
     pub confidence: f32,
-    pub x_min: f32,
-    pub y_min: f32,
-    pub x_max: f32,
-    pub y_max: f32,
+    pub bbox: BBox,
 }
 
 #[derive(Debug)]
@@ -502,36 +501,13 @@ fn restore_to_source(
     Some(Detection {
         class_id: candidate.class_id,
         confidence: candidate.confidence,
-        x_min,
-        y_min,
-        x_max,
-        y_max,
+        bbox: BBox {
+            x_min,
+            y_min,
+            x_max,
+            y_max,
+        },
     })
-}
-
-pub(crate) fn intersection_over_union(a: &Detection, b: &Detection) -> f32 {
-    let inter_x_min = a.x_min.max(b.x_min);
-    let inter_y_min = a.y_min.max(b.y_min);
-    let inter_x_max = a.x_max.min(b.x_max);
-    let inter_y_max = a.y_max.min(b.y_max);
-
-    let inter_w = (inter_x_max - inter_x_min).max(0.0);
-    let inter_h = (inter_y_max - inter_y_min).max(0.0);
-    let intersection = inter_w * inter_h;
-
-    if intersection <= 0.0 {
-        return 0.0;
-    }
-
-    let area_a = (a.x_max - a.x_min) * (a.y_max - a.y_min);
-    let area_b = (b.x_max - b.x_min) * (b.y_max - b.y_min);
-    let union = area_a + area_b - intersection;
-
-    if union <= 0.0 {
-        return 0.0;
-    }
-
-    intersection / union
 }
 
 fn sort_deterministic(detections: &mut [Detection]) {
@@ -540,10 +516,10 @@ fn sort_deterministic(detections: &mut [Detection]) {
             .confidence
             .total_cmp(&left.confidence)
             .then_with(|| left.class_id.cmp(&right.class_id))
-            .then_with(|| left.x_min.total_cmp(&right.x_min))
-            .then_with(|| left.y_min.total_cmp(&right.y_min))
-            .then_with(|| left.x_max.total_cmp(&right.x_max))
-            .then_with(|| left.y_max.total_cmp(&right.y_max))
+            .then_with(|| left.bbox.x_min.total_cmp(&right.bbox.x_min))
+            .then_with(|| left.bbox.y_min.total_cmp(&right.bbox.y_min))
+            .then_with(|| left.bbox.x_max.total_cmp(&right.bbox.x_max))
+            .then_with(|| left.bbox.y_max.total_cmp(&right.bbox.y_max))
     });
 }
 
@@ -568,7 +544,7 @@ pub(crate) fn non_maximum_suppression(mut candidates: Vec<Detection>) -> Vec<Det
                 continue;
             }
 
-            if intersection_over_union(&candidates[i], &candidates[j]) > NMS_IOU_THRESHOLD {
+            if candidates[i].bbox.iou(&candidates[j].bbox) > NMS_IOU_THRESHOLD {
                 suppressed[j] = true;
             }
         }
@@ -987,10 +963,10 @@ mod tests {
             h: 100.0,
         };
         let detection = restore_to_source(&candidate, &square_transform()).expect("should restore");
-        assert!((detection.x_min - 270.0).abs() < f32::EPSILON);
-        assert!((detection.y_min - 270.0).abs() < f32::EPSILON);
-        assert!((detection.x_max - 370.0).abs() < f32::EPSILON);
-        assert!((detection.y_max - 370.0).abs() < f32::EPSILON);
+        assert!((detection.bbox.x_min - 270.0).abs() < f32::EPSILON);
+        assert!((detection.bbox.y_min - 270.0).abs() < f32::EPSILON);
+        assert!((detection.bbox.x_max - 370.0).abs() < f32::EPSILON);
+        assert!((detection.bbox.y_max - 370.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1005,10 +981,10 @@ mod tests {
         };
         let detection =
             restore_to_source(&candidate, &landscape_transform()).expect("should restore");
-        assert!((detection.x_min - 560.0).abs() < 1.0);
-        assert!((detection.y_min - 380.0).abs() < 1.0);
-        assert!((detection.x_max - 720.0).abs() < 1.0);
-        assert!((detection.y_max - 500.0).abs() < 1.0);
+        assert!((detection.bbox.x_min - 560.0).abs() < 1.0);
+        assert!((detection.bbox.y_min - 380.0).abs() < 1.0);
+        assert!((detection.bbox.x_max - 720.0).abs() < 1.0);
+        assert!((detection.bbox.y_max - 500.0).abs() < 1.0);
     }
 
     #[test]
@@ -1022,8 +998,8 @@ mod tests {
             h: 100.0,
         };
         let detection = restore_to_source(&candidate, &square_transform()).expect("should restore");
-        assert!((detection.x_min - 0.0).abs() < f32::EPSILON);
-        assert!((detection.y_min - 0.0).abs() < f32::EPSILON);
+        assert!((detection.bbox.x_min - 0.0).abs() < f32::EPSILON);
+        assert!((detection.bbox.y_min - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1039,80 +1015,48 @@ mod tests {
         assert!(restore_to_source(&candidate, &square_transform()).is_none());
     }
 
+    fn test_bbox(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> BBox {
+        BBox {
+            x_min,
+            y_min,
+            x_max,
+            y_max,
+        }
+    }
+
+    fn test_detection(class_id: u32, confidence: f32, bbox: BBox) -> Detection {
+        Detection {
+            class_id,
+            confidence,
+            bbox,
+        }
+    }
+
     #[test]
     fn iou_identical_boxes_is_one() {
-        let box_a = Detection {
-            class_id: 0,
-            confidence: 0.9,
-            x_min: 10.0,
-            y_min: 10.0,
-            x_max: 50.0,
-            y_max: 50.0,
-        };
-        assert!((intersection_over_union(&box_a, &box_a) - 1.0).abs() < f32::EPSILON);
+        let box_a = test_detection(0, 0.9, test_bbox(10.0, 10.0, 50.0, 50.0));
+        assert!((box_a.bbox.iou(&box_a.bbox) - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn iou_disjoint_boxes_is_zero() {
-        let box_a = Detection {
-            class_id: 0,
-            confidence: 0.9,
-            x_min: 0.0,
-            y_min: 0.0,
-            x_max: 10.0,
-            y_max: 10.0,
-        };
-        let box_b = Detection {
-            class_id: 0,
-            confidence: 0.8,
-            x_min: 20.0,
-            y_min: 20.0,
-            x_max: 30.0,
-            y_max: 30.0,
-        };
-        assert!((intersection_over_union(&box_a, &box_b)).abs() < f32::EPSILON);
+        let box_a = test_detection(0, 0.9, test_bbox(0.0, 0.0, 10.0, 10.0));
+        let box_b = test_detection(0, 0.8, test_bbox(20.0, 20.0, 30.0, 30.0));
+        assert!((box_a.bbox.iou(&box_b.bbox)).abs() < f32::EPSILON);
     }
 
     #[test]
     fn iou_partial_overlap_is_between_zero_and_one() {
-        let box_a = Detection {
-            class_id: 0,
-            confidence: 0.9,
-            x_min: 0.0,
-            y_min: 0.0,
-            x_max: 20.0,
-            y_max: 20.0,
-        };
-        let box_b = Detection {
-            class_id: 0,
-            confidence: 0.8,
-            x_min: 10.0,
-            y_min: 10.0,
-            x_max: 30.0,
-            y_max: 30.0,
-        };
-        let iou = intersection_over_union(&box_a, &box_b);
+        let box_a = test_detection(0, 0.9, test_bbox(0.0, 0.0, 20.0, 20.0));
+        let box_b = test_detection(0, 0.8, test_bbox(10.0, 10.0, 30.0, 30.0));
+        let iou = box_a.bbox.iou(&box_b.bbox);
         assert!(iou > 0.0 && iou < 1.0);
     }
 
     #[test]
     fn nms_suppresses_overlapping_same_class() {
-        let high = Detection {
-            class_id: 0,
-            confidence: 0.9,
-            x_min: 10.0,
-            y_min: 10.0,
-            x_max: 50.0,
-            y_max: 50.0,
-        };
-        let low = Detection {
-            class_id: 0,
-            confidence: 0.8,
-            x_min: 12.0,
-            y_min: 12.0,
-            x_max: 48.0,
-            y_max: 48.0,
-        };
+        let high = test_detection(0, 0.9, test_bbox(10.0, 10.0, 50.0, 50.0));
+        let low = test_detection(0, 0.8, test_bbox(12.0, 12.0, 48.0, 48.0));
         let kept = non_maximum_suppression(vec![low, high]);
         assert_eq!(kept.len(), 1);
         assert!((kept[0].confidence - 0.9).abs() < f32::EPSILON);
@@ -1120,44 +1064,16 @@ mod tests {
 
     #[test]
     fn nms_retains_overlapping_different_classes() {
-        let person = Detection {
-            class_id: 0,
-            confidence: 0.9,
-            x_min: 10.0,
-            y_min: 10.0,
-            x_max: 50.0,
-            y_max: 50.0,
-        };
-        let car = Detection {
-            class_id: 2,
-            confidence: 0.85,
-            x_min: 12.0,
-            y_min: 12.0,
-            x_max: 48.0,
-            y_max: 48.0,
-        };
+        let person = test_detection(0, 0.9, test_bbox(10.0, 10.0, 50.0, 50.0));
+        let car = test_detection(2, 0.85, test_bbox(12.0, 12.0, 48.0, 48.0));
         let kept = non_maximum_suppression(vec![car, person]);
         assert_eq!(kept.len(), 2);
     }
 
     #[test]
     fn deterministic_sort_uses_class_and_coordinates() {
-        let a = Detection {
-            class_id: 1,
-            confidence: 0.5,
-            x_min: 10.0,
-            y_min: 10.0,
-            x_max: 20.0,
-            y_max: 20.0,
-        };
-        let b = Detection {
-            class_id: 0,
-            confidence: 0.5,
-            x_min: 10.0,
-            y_min: 10.0,
-            x_max: 20.0,
-            y_max: 20.0,
-        };
+        let a = test_detection(1, 0.5, test_bbox(10.0, 10.0, 20.0, 20.0));
+        let b = test_detection(0, 0.5, test_bbox(10.0, 10.0, 20.0, 20.0));
         let mut detections = vec![a, b];
         sort_deterministic(&mut detections);
         assert_eq!(detections[0].class_id, 0);
