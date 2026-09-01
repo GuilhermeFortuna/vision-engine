@@ -3,7 +3,7 @@
     "phase": 1,
     "query": "serial pipeline loop decode infer track",
     "expected": [
-      {"path": "src/pipeline/mod.rs", "symbol": "run"}
+      {"path": "src/pipeline/runtime.rs", "symbol": "Pipeline"}
     ]
   },
   {
@@ -61,6 +61,35 @@
       {"path": "docs/development/specs/VE-014-threaded-pipeline-runtime-spec.md"},
       {"path": "docs/development/plans/VE-014-threaded-pipeline-runtime-plan.md"},
       {"path": "src/pipeline/queue.rs", "symbol": "Shutdown"}
+    ]
+  },
+  {
+    "phase": 4,
+    "query": "threaded pipeline runtime stage threads spawn",
+    "expected": [
+      {"path": "src/pipeline/runtime.rs", "symbol": "spawn"}
+    ]
+  },
+  {
+    "phase": 4,
+    "query": "shutdown cascade stage threads join",
+    "expected": [
+      {"path": "src/pipeline/runtime.rs", "symbol": "request_shutdown"},
+      {"path": "src/pipeline/runtime.rs", "symbol": "join"}
+    ]
+  },
+  {
+    "phase": 4,
+    "query": "next_tracked playback loop pipeline",
+    "expected": [
+      {"path": "src/pipeline/runtime.rs", "symbol": "next_tracked"}
+    ]
+  },
+  {
+    "phase": 4,
+    "query": "FaultConfig induced failure stage panic",
+    "expected": [
+      {"path": "src/pipeline/runtime.rs", "symbol": "FaultConfig"}
     ]
   }
 ]

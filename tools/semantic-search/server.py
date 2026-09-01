@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Annotated
+
 from mcp.server.mcpserver import MCPServer
+from pydantic import Field
 
 from semantic_search.index import reindex as rebuild_index
 from semantic_search.search import semantic_code_search as search_code
@@ -13,11 +16,22 @@ mcp = MCPServer("semantic-search")
 
 @mcp.tool()
 def semantic_code_search(
-    query: str,
-    top_k: int = 8,
-    path_prefix: str | None = None,
-    kind: str | None = None,
-) -> list[dict[str, object]]:
+    query: Annotated[str, Field(description="Natural language or symbol-ish text to search for")],
+    top_k: Annotated[int, Field(description="Maximum number of results to return", ge=1)] = 8,
+    path_prefix: Annotated[
+        str | None,
+        Field(
+            description=(
+                "Optional path filter, e.g. 'src/pipeline/'. "
+                "Use during implementation to reduce noise."
+            )
+        ),
+    ] = None,
+    kind: Annotated[
+        str | None,
+        Field(description="Optional kind filter: fn, struct, enum, impl, mod, doc"),
+    ] = None,
+) -> dict[str, object]:
     """Search production Rust code and development docs with hybrid retrieval."""
     return search_code(
         query=query,
@@ -34,9 +48,22 @@ def reindex() -> dict[str, object]:
 
 
 @mcp.tool()
-def task_context(ve_id: str, top_k: int = 5) -> list[dict[str, object]]:
+def task_context(
+    ve_id: Annotated[
+        str | None,
+        Field(description="VE task id, e.g. 'VE-014'"),
+    ] = None,
+    task_id: Annotated[
+        str | None,
+        Field(description="Alias for ve_id, e.g. 'VE-014'"),
+    ] = None,
+    top_k: Annotated[int, Field(description="Maximum number of results to return", ge=1)] = 5,
+) -> dict[str, object]:
     """Return VE spec/plan sections and related code chunks for a task id."""
-    return search_task_context(ve_id=ve_id, top_k=top_k)
+    resolved = ve_id or task_id
+    if not resolved:
+        raise ValueError("Provide ve_id or task_id (e.g. 'VE-014').")
+    return search_task_context(ve_id=resolved, top_k=top_k)
 
 
 def main() -> None:

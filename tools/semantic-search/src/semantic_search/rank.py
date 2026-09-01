@@ -31,10 +31,30 @@ CODE_QUERY_HINTS = (
     "impl",
     "ownership",
     "thread",
+    "threaded",
+    "runtime",
+    "spawn",
+    "join",
+    "cascade",
+    "orchestrat",
     "send",
     "recv",
     "bounded",
     "frame",
+)
+
+ORCHESTRATION_QUERY_TOKENS = frozenset(
+    {
+        "thread",
+        "threaded",
+        "stage",
+        "cascade",
+        "spawn",
+        "join",
+        "runtime",
+        "orchestrat",
+        "next",
+    }
 )
 
 
@@ -141,6 +161,7 @@ def rank_chunks(
     path_prefix: str | None = None,
     kind: str | None = None,
     query_embedding: list[float] | None = None,
+    score_floor: float | None = None,
 ) -> list[RankedChunk]:
     if top_k < 1 or not chunks:
         return []
@@ -154,6 +175,7 @@ def rank_chunks(
         return []
 
     query_tokens = expand_query_tokens(tokenize(query))
+    orchestration_query = bool(query_tokens & ORCHESTRATION_QUERY_TOKENS)
     corpus_tokens = [tokenize(chunk.search_text()) for chunk in filtered]
     bm25 = BM25Okapi(corpus_tokens)
     bm25_scores = bm25.get_scores(tokenize(query)).tolist()
@@ -180,6 +202,18 @@ def rank_chunks(
             + 0.1 * body_overlap_score(query_tokens, chunk)
         )
         fused *= kind_weight(chunk, query)
+        if orchestration_query:
+            if chunk.path.endswith("runtime.rs"):
+                fused *= 1.35
+            if chunk.kind == "fn" and chunk.symbol in {
+                "spawn",
+                "join",
+                "next_tracked",
+                "request_shutdown",
+            }:
+                fused *= 1.2
+            if chunk.kind == "struct" and chunk.symbol in {"Pipeline", "FaultConfig"}:
+                fused *= 1.1
         if chunk.path.endswith("queue.rs") and chunk.symbol in query_tokens:
             fused *= 1.2
         if chunk.symbol == "request" and {"send", "recv", "shutdown"} & query_tokens:
@@ -214,6 +248,8 @@ def rank_chunks(
     deduped: list[RankedChunk] = []
     seen: set[tuple[str, str]] = set()
     for item in ranked:
+        if score_floor is not None and item.score < score_floor:
+            continue
         key = (item.chunk.path, item.chunk.symbol)
         if key in seen:
             continue

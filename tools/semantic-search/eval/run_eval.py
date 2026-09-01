@@ -12,8 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from semantic_search.index import get_index, reindex
-from semantic_search.rank import rank_chunks
-from semantic_search.search import task_context
+from semantic_search.search import semantic_code_search, task_context
 
 QUERIES_FILE = Path(__file__).resolve().parent / "queries.json"
 TOP_K = 3
@@ -52,17 +51,19 @@ def evaluate_query(entry: dict[str, object], top_k: int) -> tuple[bool, list[dic
         raise ValueError(f"invalid expected list for query: {query}")
 
     if phase >= 3 and query.upper().startswith("VE-"):
-        ranked = task_context(query.split()[0], top_k=top_k)
+        response = task_context(query.split()[0], top_k=top_k)
+        ranked = response["results"]
     else:
+        response = semantic_code_search(query, top_k=top_k)
         ranked = [
             {
-                "path": item.chunk.path,
-                "symbol": item.chunk.symbol,
-                "function": item.chunk.symbol,
-                "kind": item.chunk.kind,
-                "score": item.score,
+                "path": item["path"],
+                "symbol": item["symbol"],
+                "function": item["symbol"],
+                "kind": item["kind"],
+                "score": item["score"],
             }
-            for item in rank_chunks(query, get_index(), top_k=top_k)
+            for item in response["results"]
         ]
 
     # Each expected item must appear somewhere in top-k (not all in same slot).
