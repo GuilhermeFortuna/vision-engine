@@ -8,9 +8,9 @@
 | [VE-005](specs/VE-005-milestone-one-hardening-and-acceptance-spec.md) / [Plan](plans/VE-005-milestone-one-hardening-and-acceptance-plan.md) | 01    | `DONE`    | VE-004     | Robust lifecycle and verified Milestone 1 acceptance              |
 | [VE-006](specs/VE-006-tracking-domain-and-frame-timestamps-spec.md) / [Plan](plans/VE-006-tracking-domain-and-frame-timestamps-plan.md)     | 02    | `DONE`    | VE-005     | Frame stamps, shared bounding box, and track domain model         |
 | [VE-007](specs/VE-007-kalman-motion-model-spec.md) / [Plan](plans/VE-007-kalman-motion-model-plan.md)                                       | 02    | `DONE`    | VE-006     | Constant-velocity Kalman prediction and recoverable updates       |
-| [VE-008](specs/VE-008-detection-track-association-spec.md) / [Plan](plans/VE-008-detection-track-association-plan.md)                       | 02    | `BLOCKED` | VE-007     | Class-partitioned IoU cost and deterministic optimal assignment   |
-| [VE-009](specs/VE-009-tracker-lifecycle-and-integration-spec.md) / [Plan](plans/VE-009-tracker-lifecycle-and-integration-plan.md)           | 02    | `BLOCKED` | VE-008     | Stable track IDs, lifecycle rules, and bounded tracker state      |
-| [VE-010](specs/VE-010-tracking-visualization-and-metrics-spec.md) / [Plan](plans/VE-010-tracking-visualization-and-metrics-plan.md)         | 02    | `BLOCKED` | VE-009     | Rendering extraction, ID labels, and tracking metrics overlay     |
+| [VE-008](specs/VE-008-detection-track-association-spec.md) / [Plan](plans/VE-008-detection-track-association-plan.md)                       | 02    | `DONE`    | VE-007     | Class-partitioned IoU cost and deterministic optimal assignment   |
+| [VE-009](specs/VE-009-tracker-lifecycle-and-integration-spec.md) / [Plan](plans/VE-009-tracker-lifecycle-and-integration-plan.md)           | 02    | `DONE`    | VE-008     | Stable track IDs, lifecycle rules, and bounded tracker state      |
+| [VE-010](specs/VE-010-tracking-visualization-and-metrics-spec.md) / [Plan](plans/VE-010-tracking-visualization-and-metrics-plan.md)         | 02    | `READY`   | VE-009     | Rendering extraction, ID labels, and tracking metrics overlay     |
 | [VE-011](specs/VE-011-milestone-two-hardening-and-acceptance-spec.md) / [Plan](plans/VE-011-milestone-two-hardening-and-acceptance-plan.md) | 02    | `BLOCKED` | VE-010     | Deterministic ID evidence and verified Milestone 2 acceptance     |
 
 
