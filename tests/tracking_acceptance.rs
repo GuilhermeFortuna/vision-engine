@@ -180,14 +180,53 @@ fn same_class_crossing_records_the_identity_outcome_without_gating_it() {
         ]);
     }
 
+    // Ground-truth centre of each object per frame, in the same order the
+    // detections were built: object 0 travels left-to-right, object 1 right-to-left.
+    let truth: Vec<(f32, f32)> = frames
+        .iter()
+        .map(|detections| (detections[0].bbox.center().0, detections[1].bbox.center().0))
+        .collect();
+
     let results = run_sequence(&frames, FPS);
-    let before = ids_of(&results[2]);
-    let after = ids_of(results.last().expect("crossing result"));
-    assert_eq!(before.len(), 2);
-    assert_eq!(after.len(), 2);
+
+    // Identity of the track nearest each object's true position. Comparing sorted
+    // id sets cannot see a swap -- both objects keep existing either way -- so the
+    // outcome is measured per object instead.
+    let id_nearest = |tracks: &Vec<Track>, target: f32| -> Option<u64> {
+        tracks
+            .iter()
+            .filter(|track| track.state == TrackState::Confirmed)
+            .min_by(|a, b| {
+                (a.bbox.center().0 - target)
+                    .abs()
+                    .total_cmp(&(b.bbox.center().0 - target).abs())
+            })
+            .map(|track| track.id.0)
+    };
+
+    let before_frame = 2;
+    let after_frame = results.len() - 1;
+    let before = (
+        id_nearest(&results[before_frame], truth[before_frame].0),
+        id_nearest(&results[before_frame], truth[before_frame].1),
+    );
+    let after = (
+        id_nearest(&results[after_frame], truth[after_frame].0),
+        id_nearest(&results[after_frame], truth[after_frame].1),
+    );
+
+    // Weak invariants only: both objects are still tracked either side of the
+    // crossing. Whether identity followed the object is recorded, never gated --
+    // an ambiguous same-class crossing is undecidable from geometry alone.
+    assert_eq!(ids_of(&results[before_frame]).len(), 2);
+    assert_eq!(ids_of(&results[after_frame]).len(), 2);
+    assert!(before.0.is_some() && before.1.is_some());
+    assert!(after.0.is_some() && after.1.is_some());
+
+    let survived = before.0 == after.0 && before.1 == after.1 && before.0 != before.1;
     println!(
-        "same-class crossing ids before={before:?} after={after:?} survived={}",
-        before == after
+        "same-class crossing: object0 id {:?} -> {:?}, object1 id {:?} -> {:?}, survived={survived}",
+        before.0, after.0, before.1, after.1
     );
 }
 
@@ -217,9 +256,16 @@ fn invalid_tracking_inputs_name_the_stage_and_frame_index() {
         confidence: 0.9,
         bbox: BBox::from_center_size(0.0, 0.0, 0.0, 1.0),
     };
-    let association_error = tracker
+    // The failing stage is input validation, not association: the detection is
+    // rejected before any matching is attempted, so the message must say so.
+    let detection_error = tracker
         .try_update(&[invalid_detection], stamp(43, 0.0))
         .expect_err("invalid detection must fail");
-    assert!(association_error.to_string().contains("association"));
-    assert!(association_error.to_string().contains("43"));
+    let message = detection_error.to_string();
+    assert!(message.contains("detection"), "stage not named: {message}");
+    assert!(
+        message.contains("index 0"),
+        "offending index missing: {message}"
+    );
+    assert!(message.contains("43"), "frame index missing: {message}");
 }

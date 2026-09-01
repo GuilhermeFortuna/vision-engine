@@ -1,6 +1,7 @@
 mod render;
 
 use std::ffi::OsString;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -102,9 +103,15 @@ fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER));
 
+    // Colour codes are written between the field name and `=`, which makes
+    // redirected logs unparseable by ordinary text tooling. Emit them only when
+    // stdout is actually a terminal.
+    let use_ansi = std::io::stdout().is_terminal();
+
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_ansi(use_ansi)
         .init();
 }
 
@@ -255,6 +262,7 @@ fn log_playback_summary(
     frame_count: u64,
     provenance: &ProvenanceCounts,
     adjustments: u64,
+    rejected_filter_updates: u64,
 ) {
     let media_ms = last_stamp.map(|stamp| stamp.media_ms).unwrap_or(0.0);
     tracing::info!(
@@ -264,6 +272,7 @@ fn log_playback_summary(
         derived_fps = provenance.derived_from_frame_rate,
         derived_index = provenance.derived_from_index,
         adjustments,
+        rejected_filter_updates,
         "playback complete"
     );
 }
@@ -337,6 +346,7 @@ fn run_playback(config: &Config) -> Result<()> {
         let run_started = Instant::now();
         let mut last_progress_log = None;
         let mut media_offset_ms = 0.0;
+        let mut fallback_reported = false;
 
         loop {
             if config
@@ -381,11 +391,15 @@ fn run_playback(config: &Config) -> Result<()> {
             let reported_ms = read_capture_pos_msec(&mut capture)?
                 .map(|position_ms| position_ms + media_offset_ms);
             let stamp = frame_clock.stamp(reported_ms);
-            if stamp.source != TimeSource::Reported {
-                tracing::info!(
+            // One line per run, not per frame: the end-of-run summary reports the
+            // full provenance breakdown, so repeating this every frame only floods
+            // the console on a source that never reports timestamps.
+            if stamp.source != TimeSource::Reported && !fallback_reported {
+                fallback_reported = true;
+                tracing::warn!(
                     frame_index = stamp.index,
                     source = ?stamp.source,
-                    "tracking timestamp unavailable; using deterministic fallback"
+                    "tracking timestamp unavailable; using deterministic fallback for this run"
                 );
             }
             provenance_counts.record(stamp.source);
@@ -446,6 +460,7 @@ fn run_playback(config: &Config) -> Result<()> {
             frame_clock.stamped_count(),
             &provenance_counts,
             frame_clock.adjustments(),
+            tracker.rejected_updates(),
         );
 
         Ok(())

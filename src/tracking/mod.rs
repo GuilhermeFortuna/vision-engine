@@ -1,5 +1,3 @@
-#![allow(dead_code, unused_imports)]
-
 pub mod assignment;
 pub mod clock;
 pub mod kalman;

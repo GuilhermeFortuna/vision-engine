@@ -70,7 +70,7 @@ impl Tracker {
         for (detection_index, detection) in detections.iter().enumerate() {
             if !detection.confidence.is_finite() || !detection.bbox.is_valid() {
                 bail!(
-                    "tracking association failed at frame {}: invalid detection at index {detection_index}",
+                    "tracking input invalid at frame {}: unusable detection at index {detection_index}",
                     stamp.index
                 );
             }
