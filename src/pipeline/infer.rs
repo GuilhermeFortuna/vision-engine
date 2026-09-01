@@ -7,7 +7,7 @@ use ort::value::{DynValue, Tensor};
 use vision_engine::detector::{Detection, LetterboxTransform, LoadedModel};
 use vision_engine::tracking::BBox;
 
-use super::preprocess::Prepared;
+use super::message::{DetectedFrame, PreparedFrame};
 
 const OUTPUT_SHAPE: [i64; 3] = [1, 84, 8400];
 const CONFIDENCE_THRESHOLD: f32 = 0.25;
@@ -25,12 +25,6 @@ struct RawCandidate {
     h: f32,
 }
 
-#[derive(Debug)]
-pub struct Detected {
-    pub detections: Vec<Detection>,
-    pub inference_ms: f64,
-}
-
 pub struct InferStage {
     model: LoadedModel,
 }
@@ -40,8 +34,15 @@ impl InferStage {
         Self { model }
     }
 
-    pub fn detect(&mut self, prepared: &Prepared) -> Result<Detected> {
-        let input_value = Tensor::from_array(prepared.input.clone()).map_err(ort_error)?;
+    pub fn detect(&mut self, prepared: PreparedFrame) -> Result<DetectedFrame> {
+        let PreparedFrame {
+            frame,
+            stamp,
+            mut timings,
+            input,
+            transform,
+        } = prepared;
+        let input_value = Tensor::from_array(input).map_err(ort_error)?;
 
         let inference_start = Instant::now();
         let outputs = self
@@ -52,11 +53,14 @@ impl InferStage {
         let inference_ms = inference_start.elapsed().as_secs_f64() * 1000.0;
 
         let output = extract_output_view(&outputs[self.model.output_name.as_str()])?;
-        let detections = postprocess_output(&output, &prepared.transform)?;
+        let detections = postprocess_output(&output, &transform)?;
+        timings.inference_ms = inference_ms;
 
-        Ok(Detected {
+        Ok(DetectedFrame {
+            frame,
+            stamp,
+            timings,
             detections,
-            inference_ms,
         })
     }
 }

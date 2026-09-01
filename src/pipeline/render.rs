@@ -5,6 +5,7 @@ use opencv::{
     prelude::*,
 };
 
+use super::message::TrackedFrame;
 use super::metrics::FrameMetrics;
 use vision_engine::detector::coco_class_name;
 use vision_engine::tracking::{Track, TrackId, TrackState};
@@ -39,14 +40,14 @@ impl RenderStage {
 
     pub fn present(
         &mut self,
-        frame: &mut Mat,
-        tracks: &[Track],
+        mut tracked: TrackedFrame,
         metrics: &FrameMetrics,
     ) -> Result<Presentation> {
-        draw_tracks(frame, tracks).context("failed to draw track overlays")?;
-        draw_metrics_overlay(frame, metrics)
+        draw_tracks(&mut tracked.frame, &tracked.tracks)
+            .context("failed to draw track overlays")?;
+        draw_metrics_overlay(&mut tracked.frame, metrics)
             .context("failed to draw performance metrics overlay")?;
-        highgui::imshow(WINDOW_NAME, frame).context("failed to display video frame")?;
+        highgui::imshow(WINDOW_NAME, &tracked.frame).context("failed to display video frame")?;
 
         let key = highgui::wait_key(1).context("failed to poll keyboard events")?;
         if should_exit(key) {

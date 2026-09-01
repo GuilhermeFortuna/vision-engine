@@ -9,17 +9,17 @@ use opencv::{
 };
 use vision_engine::detector::LetterboxTransform;
 
+use super::message::{DecodedFrame, PreparedFrame};
+
 const INPUT_SIZE: i32 = 640;
 const PAD_VALUE: u8 = 114;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Prepared {
-    pub input: Array4<f32>,
-    pub transform: LetterboxTransform,
-    pub preprocess_ms: f64,
-}
-
-pub fn prepare(frame: &Mat) -> Result<Prepared> {
+pub fn prepare(decoded: DecodedFrame) -> Result<PreparedFrame> {
+    let DecodedFrame {
+        frame,
+        stamp,
+        mut timings,
+    } = decoded;
     let preprocess_start = Instant::now();
 
     if frame.empty() {
@@ -49,7 +49,7 @@ pub fn prepare(frame: &Mat) -> Result<Prepared> {
 
     let mut resized = Mat::default();
     imgproc::resize(
-        frame,
+        &frame,
         &mut resized,
         Size::new(resized_w, resized_h),
         0.0,
@@ -123,19 +123,41 @@ pub fn prepare(frame: &Mat) -> Result<Prepared> {
     };
 
     let preprocess_ms = preprocess_start.elapsed().as_secs_f64() * 1000.0;
+    timings.preprocess_ms = preprocess_ms;
 
-    Ok(Prepared {
+    Ok(PreparedFrame {
+        frame,
+        stamp,
+        timings,
         input: tensor,
         transform,
-        preprocess_ms,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pipeline::message::StageTimings;
     use ndarray::Axis;
     use opencv::core::{CV_8UC3, Mat, Scalar};
+    use vision_engine::tracking::clock::{FrameStamp, TimeSource};
+
+    fn sample_stamp() -> FrameStamp {
+        FrameStamp {
+            index: 0,
+            media_ms: 0.0,
+            source: TimeSource::Reported,
+            adjusted: false,
+        }
+    }
+
+    fn decoded_from_mat(frame: Mat) -> DecodedFrame {
+        DecodedFrame {
+            frame,
+            stamp: sample_stamp(),
+            timings: StageTimings::default(),
+        }
+    }
 
     fn solid_bgr_mat(width: i32, height: i32, b: u8, g: u8, r: u8) -> Mat {
         Mat::new_rows_cols_with_default(
@@ -149,15 +171,15 @@ mod tests {
 
     #[test]
     fn empty_frame_is_rejected() {
-        let frame = Mat::default();
-        let err = prepare(&frame).expect_err("empty frame should fail");
+        let decoded = decoded_from_mat(Mat::default());
+        let err = prepare(decoded).expect_err("empty frame should fail");
         assert!(err.to_string().contains("empty"));
     }
 
     #[test]
     fn square_frame_has_unit_scale_and_no_padding() {
         let frame = solid_bgr_mat(640, 640, 0, 0, 255);
-        let prepared = prepare(&frame).expect("preprocess should succeed");
+        let prepared = prepare(decoded_from_mat(frame)).expect("preprocess should succeed");
 
         assert!((prepared.transform.scale - 1.0).abs() < f32::EPSILON);
         assert_eq!(prepared.transform.pad_left, 0);
@@ -173,7 +195,7 @@ mod tests {
     #[test]
     fn landscape_frame_uses_horizontal_letterbox() {
         let frame = solid_bgr_mat(1280, 720, 114, 114, 114);
-        let prepared = prepare(&frame).expect("preprocess should succeed");
+        let prepared = prepare(decoded_from_mat(frame)).expect("preprocess should succeed");
 
         assert!((prepared.transform.scale - 0.5).abs() < f32::EPSILON);
         assert_eq!(prepared.transform.pad_left, 0);
@@ -192,7 +214,7 @@ mod tests {
     #[test]
     fn portrait_frame_uses_vertical_letterbox() {
         let frame = solid_bgr_mat(720, 1280, 114, 114, 114);
-        let prepared = prepare(&frame).expect("preprocess should succeed");
+        let prepared = prepare(decoded_from_mat(frame)).expect("preprocess should succeed");
 
         assert!((prepared.transform.scale - 0.5).abs() < f32::EPSILON);
         assert_eq!(prepared.transform.pad_left, 140);
@@ -202,7 +224,7 @@ mod tests {
     #[test]
     fn odd_dimensions_assign_padding_remainder_to_right_and_bottom() {
         let frame = solid_bgr_mat(1279, 719, 114, 114, 114);
-        let prepared = prepare(&frame).expect("preprocess should succeed");
+        let prepared = prepare(decoded_from_mat(frame)).expect("preprocess should succeed");
 
         let resized_w = (1279.0_f32 * prepared.transform.scale).round() as i32;
         let resized_h = (719.0_f32 * prepared.transform.scale).round() as i32;
@@ -226,14 +248,14 @@ mod tests {
     #[test]
     fn normalization_maps_255_to_one() {
         let frame = solid_bgr_mat(640, 640, 0, 0, 255);
-        let prepared = prepare(&frame).expect("preprocess should succeed");
+        let prepared = prepare(decoded_from_mat(frame)).expect("preprocess should succeed");
         assert!((prepared.input[[0, 0, 320, 320]] - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]
     fn tensor_is_nchw_contiguous() {
         let frame = solid_bgr_mat(640, 640, 10, 20, 30);
-        let prepared = prepare(&frame).expect("preprocess should succeed");
+        let prepared = prepare(decoded_from_mat(frame)).expect("preprocess should succeed");
 
         let channel_0 = prepared.input.index_axis(Axis(1), 0);
         let channel_1 = prepared.input.index_axis(Axis(1), 1);

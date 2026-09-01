@@ -8,6 +8,8 @@ use opencv::{
 };
 use vision_engine::tracking::{FrameClock, FrameStamp, TimeSource};
 
+use super::message::{DecodedFrame, StageTimings};
+
 const FALLBACK_FRAME_INTERVAL_MS: f64 = 1000.0 / 30.0;
 
 #[derive(Debug, Default)]
@@ -82,6 +84,21 @@ impl DecodeStage {
             last_stamp: None,
             video_path,
         })
+    }
+
+    pub fn next(&mut self) -> Result<Option<DecodedFrame>> {
+        let mut frame = Mat::default();
+        match self.next_into(&mut frame)? {
+            DecodeOutcome::EndOfRun => Ok(None),
+            DecodeOutcome::Frame { stamp, decode_ms } => Ok(Some(DecodedFrame {
+                frame,
+                stamp,
+                timings: StageTimings {
+                    decode_ms,
+                    ..StageTimings::default()
+                },
+            })),
+        }
     }
 
     pub fn next_into(&mut self, frame: &mut Mat) -> Result<DecodeOutcome> {
@@ -358,10 +375,9 @@ mod tests {
             let _ = fs::remove_dir_all(&dir);
             return;
         };
-        let mut frame = Mat::default();
-        let err = match stage.next_into(&mut frame) {
-            Ok(DecodeOutcome::EndOfRun) => panic!("expected error for undecodable file"),
-            Ok(DecodeOutcome::Frame { .. }) => panic!("expected error for undecodable file"),
+        let err = match stage.next() {
+            Ok(None) => panic!("expected error for undecodable file"),
+            Ok(Some(_)) => panic!("expected error for undecodable file"),
             Err(err) => err,
         };
         assert!(

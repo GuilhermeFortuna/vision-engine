@@ -1,7 +1,10 @@
 mod decode;
 mod infer;
+mod message;
 mod metrics;
 mod preprocess;
+#[allow(dead_code)]
+mod queue;
 mod render;
 mod track;
 mod track_dump;
@@ -9,13 +12,12 @@ mod track_dump;
 use std::time::Instant;
 
 use anyhow::Result;
-use opencv::prelude::*;
 use vision_engine::detector::LoadedModel;
 use vision_engine::tracking::TrackState;
 
 use crate::cli::Config;
 
-use decode::{DecodeOutcome, DecodeStage, log_playback_summary};
+use decode::{DecodeStage, log_playback_summary};
 use infer::InferStage;
 use metrics::{FrameMetrics, RollingFps};
 use preprocess::prepare;
@@ -38,44 +40,40 @@ pub fn run(config: &Config) -> Result<()> {
         .transpose()?;
 
     let playback_result = (|| -> Result<()> {
-        let mut frame = Mat::default();
-
         loop {
-            match decode.next_into(&mut frame)? {
-                DecodeOutcome::EndOfRun => break,
-                DecodeOutcome::Frame { stamp, decode_ms } => {
-                    let prepared = prepare(&frame)?;
-                    let detected = infer_stage.detect(&prepared)?;
-                    let tracked = track_stage.update(&detected.detections, stamp)?;
+            let Some(decoded) = decode.next()? else {
+                break;
+            };
+            let prepared = prepare(decoded)?;
+            let detected = infer_stage.detect(prepared)?;
+            let tracked = track_stage.update(detected)?;
 
-                    let now = Instant::now();
-                    rolling_fps.record_frame(now.duration_since(last_iteration_end));
-                    last_iteration_end = now;
+            let now = Instant::now();
+            rolling_fps.record_frame(now.duration_since(last_iteration_end));
+            last_iteration_end = now;
 
-                    let confirmed_tracks = tracked
-                        .tracks
-                        .iter()
-                        .filter(|track| track.state == TrackState::Confirmed)
-                        .count();
-                    track_stage.maybe_log_progress(stamp, confirmed_tracks);
+            let confirmed_tracks = tracked
+                .tracks
+                .iter()
+                .filter(|track| track.state == TrackState::Confirmed)
+                .count();
+            track_stage.maybe_log_progress(tracked.stamp, confirmed_tracks);
 
-                    if let Some(dump) = track_dump.as_mut() {
-                        dump.write_frame(stamp, &tracked.tracks)?;
-                    }
+            if let Some(dump) = track_dump.as_mut() {
+                dump.write_frame(tracked.stamp, &tracked.tracks)?;
+            }
 
-                    let metrics = FrameMetrics {
-                        decode_ms,
-                        inference_ms: detected.inference_ms,
-                        tracking_ms: tracked.tracking_ms,
-                        fps: rolling_fps.displayed_fps(),
-                        confirmed_tracks,
-                    };
+            let metrics = FrameMetrics {
+                decode_ms: tracked.timings.decode_ms,
+                inference_ms: tracked.timings.inference_ms,
+                tracking_ms: tracked.timings.tracking_ms,
+                fps: rolling_fps.displayed_fps(),
+                confirmed_tracks,
+            };
 
-                    match render.present(&mut frame, &tracked.tracks, &metrics)? {
-                        Presentation::Continue => {}
-                        Presentation::QuitRequested => break,
-                    }
-                }
+            match render.present(tracked, &metrics)? {
+                Presentation::Continue => {}
+                Presentation::QuitRequested => break,
             }
         }
 

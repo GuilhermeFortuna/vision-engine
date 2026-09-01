@@ -1,8 +1,9 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use vision_engine::detector::Detection;
-use vision_engine::tracking::{FrameStamp, Track, Tracker};
+use vision_engine::tracking::{FrameStamp, Tracker};
+
+use super::message::{DetectedFrame, TrackedFrame};
 
 const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -10,11 +11,6 @@ pub struct TrackStage {
     tracker: Tracker,
     last_progress_log: Option<Instant>,
     run_started: Instant,
-}
-
-pub struct Tracked {
-    pub tracks: Vec<Track>,
-    pub tracking_ms: f64,
 }
 
 impl Default for TrackStage {
@@ -32,16 +28,24 @@ impl TrackStage {
         }
     }
 
-    pub fn update(&mut self, detections: &[Detection], stamp: FrameStamp) -> Result<Tracked> {
+    pub fn update(&mut self, detected: DetectedFrame) -> Result<TrackedFrame> {
+        let DetectedFrame {
+            frame,
+            stamp,
+            mut timings,
+            detections,
+        } = detected;
         let tracking_start = Instant::now();
         let tracks = self
             .tracker
-            .try_update(detections, stamp)
+            .try_update(&detections, stamp)
             .with_context(|| format!("tracking update failed at frame {}", stamp.index))?;
-        let tracking_ms = tracking_start.elapsed().as_secs_f64() * 1000.0;
-        Ok(Tracked {
+        timings.tracking_ms = tracking_start.elapsed().as_secs_f64() * 1000.0;
+        Ok(TrackedFrame {
+            frame,
+            stamp,
+            timings,
             tracks,
-            tracking_ms,
         })
     }
 
