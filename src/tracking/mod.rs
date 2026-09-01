@@ -1,6 +1,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod clock;
+pub mod kalman;
 pub mod params;
 pub mod track;
 

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.104"
+nalgebra = "0.33"
 ndarray = "0.17"
 opencv = "0.100.1"
 ort = "=2.0.0-rc.13"
