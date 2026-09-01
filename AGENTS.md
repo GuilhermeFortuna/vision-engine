@@ -46,6 +46,30 @@ Do not infer milestone progression or begin follow-up work unless explicitly req
 
 ---
 
+## Semantic Code Search
+
+Use the local semantic code-search MCP to retrieve the most relevant production Rust functions before broader repository exploration.
+
+Tool: `semantic_code_search`
+
+Default behavior:
+
+- For code-understanding, debugging, architecture review, or locating implementation logic, call `semantic_code_search` first.
+- Use `top_k=3` unless there is a clear reason to request more.
+- Inspect returned functions before falling back to grep, broad file reads, or repository-wide searches.
+
+Do not treat MCP results as authoritative by themselves. Verify surrounding code when correctness depends on call sites, types, configuration, or cross-function behavior.
+
+Do not use semantic search for:
+
+- exact filename or path lookups
+- exact symbol searches when the symbol name is already known
+- non-code files unless needed
+
+The tool searches production Rust functions under `src/**/*.rs`, excludes test-only code, and uses the local Ollama model `qwen3-embedding:4b`.
+
+---
+
 ## VE Tasks
 
 When working on a numbered Vision Engine task (`VE-...`):
