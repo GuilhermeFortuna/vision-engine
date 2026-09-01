@@ -1,6 +1,6 @@
 # VE-002: Video decoding and playback
 
-**Status:** `BLOCKED` (authoritative: [`../STATUS.md`](../STATUS.md))  
+**Status:** `DONE` (authoritative: [`../STATUS.md`](../STATUS.md))  
 **Project direction:** [`../../../PROJECT.md`](../../../PROJECT.md)  
 **Depends on:** VE-001  
 **Implementation plan:** [`../plans/VE-002-video-decoding-and-playback-plan.md`](../plans/VE-002-video-decoding-and-playback-plan.md)

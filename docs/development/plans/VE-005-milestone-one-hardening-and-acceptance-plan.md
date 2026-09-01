@@ -1,6 +1,6 @@
 # VE-005 implementation plan: Milestone 1 hardening and acceptance
 
-**Status:** `BLOCKED` (authoritative: [`../STATUS.md`](../STATUS.md))  
+**Status:** `READY` (authoritative: [`../STATUS.md`](../STATUS.md))  
 **Specification:** [`../specs/VE-005-milestone-one-hardening-and-acceptance-spec.md`](../specs/VE-005-milestone-one-hardening-and-acceptance-spec.md)  
 **Depends on:** VE-004
 

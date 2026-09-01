@@ -1,6 +1,6 @@
 # VE-004 implementation plan: Detection post-processing and rendering
 
-**Status:** `BLOCKED` (authoritative: [`../STATUS.md`](../STATUS.md))  
+**Status:** `DONE` (authoritative: [`../STATUS.md`](../STATUS.md))  
 **Specification:** [`../specs/VE-004-detection-postprocessing-and-rendering-spec.md`](../specs/VE-004-detection-postprocessing-and-rendering-spec.md)  
 **Depends on:** VE-003
 

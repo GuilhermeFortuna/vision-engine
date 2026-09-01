@@ -54,7 +54,14 @@ fn missing_video_file_exits_with_error() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("video"));
+    assert!(
+        stderr.contains("video"),
+        "expected the failing role, got: {stderr}"
+    );
+    assert!(
+        stderr.contains(&*missing_video.to_string_lossy()),
+        "expected the offending path in the error, got: {stderr}"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -65,11 +72,10 @@ fn invalid_onnx_exits_with_error() {
     let model = dir.join("invalid.onnx");
     fs::write(&model, b"not an onnx file").expect("failed to write invalid model");
 
-    let video = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("samples/test.mp4");
-    assert!(
-        video.is_file(),
-        "samples/test.mp4 is required for invalid_onnx_exits_with_error"
-    );
+    // The model is loaded before the video capture is opened, so a stub video is
+    // enough to reach the ONNX failure without depending on an untracked asset.
+    let video = dir.join("stub.mp4");
+    fs::write(&video, b"stub video").expect("failed to write stub video");
 
     let output = Command::new(bin())
         .arg(&video)
@@ -88,15 +94,14 @@ fn invalid_onnx_exits_with_error() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+// Requires a real YOLOv8n ONNX model, so it is opt-in rather than silently skipped:
+// run with `cargo test -- --ignored` and VISION_ENGINE_TEST_MODEL set.
 #[test]
+#[ignore = "requires VISION_ENGINE_TEST_MODEL pointing at a valid YOLOv8n ONNX model"]
 fn undecodable_video_exits_with_error_when_model_is_valid() {
-    let model_path = std::env::var("VISION_ENGINE_TEST_MODEL").ok();
-    let Some(model_path) = model_path else {
-        eprintln!(
-            "skipped undecodable_video_exits_with_error_when_model_is_valid: set VISION_ENGINE_TEST_MODEL to a valid YOLOv8n ONNX path"
-        );
-        return;
-    };
+    let model_path = std::env::var("VISION_ENGINE_TEST_MODEL").unwrap_or_else(|_| {
+        panic!("VISION_ENGINE_TEST_MODEL is not set; it must point to a valid YOLOv8n ONNX model")
+    });
 
     if !PathBuf::from(&model_path).is_file() {
         panic!("VISION_ENGINE_TEST_MODEL does not point to a regular file: {model_path}");

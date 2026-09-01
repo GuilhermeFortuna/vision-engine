@@ -9,4 +9,4 @@ ndarray = "0.17"
 opencv = "0.100.1"
 ort = "=2.0.0-rc.13"
 tracing = "0.1.44"
-tracing-subscriber = "0.3.23"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

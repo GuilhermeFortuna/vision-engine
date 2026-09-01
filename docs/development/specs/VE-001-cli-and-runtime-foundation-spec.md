@@ -1,6 +1,6 @@
 # VE-001: CLI and runtime foundation
 
-**Status:** `READY` (authoritative: [`../STATUS.md`](../STATUS.md))  
+**Status:** `DONE` (authoritative: [`../STATUS.md`](../STATUS.md))  
 **Project direction:** [`../../../PROJECT.md`](../../../PROJECT.md)  
 **Depends on:** None  
 **Implementation plan:** [`../plans/VE-001-cli-and-runtime-foundation-plan.md`](../plans/VE-001-cli-and-runtime-foundation-plan.md)

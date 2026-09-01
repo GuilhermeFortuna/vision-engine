@@ -1,6 +1,6 @@
 # VE-003: YOLOv8 ONNX inference
 
-**Status:** `BLOCKED` (authoritative: [`../STATUS.md`](../STATUS.md))  
+**Status:** `DONE` (authoritative: [`../STATUS.md`](../STATUS.md))  
 **Project direction:** [`../../../PROJECT.md`](../../../PROJECT.md)  
 **Depends on:** VE-002  
 **Implementation plan:** [`../plans/VE-003-yolov8-onnx-inference-plan.md`](../plans/VE-003-yolov8-onnx-inference-plan.md)

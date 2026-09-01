@@ -14,6 +14,7 @@ use opencv::{
 };
 
 const DEFAULT_MODEL_PATH: &str = "models/yolov8n.onnx";
+const DEFAULT_LOG_FILTER: &str = "info,ort=warn";
 const WINDOW_NAME: &str = "vision-engine";
 const MIN_FPS_WINDOW: Duration = Duration::from_secs(1);
 const LABEL_FONT_SCALE: f64 = 0.6;
@@ -96,8 +97,14 @@ fn run() -> Result<()> {
 }
 
 fn init_tracing() {
+    // ONNX Runtime bridges its own verbose INFO logging into `tracing` under the
+    // `ort` target, which buries application output. Keep it at `warn` unless the
+    // user asks for more through `RUST_LOG`.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER));
+
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
+        .with_env_filter(filter)
         .with_target(false)
         .init();
 }
@@ -106,9 +113,9 @@ fn print_usage() {
     println!(
         "Usage: vision-engine <video> [--model <path>]\n\
          \n\
-           <video>          Path to a local video file (required)\n\
-           --model <path>   Path to ONNX model (default: {DEFAULT_MODEL_PATH})\n\
-           -h, --help       Show this help"
+         \x20 <video>          Path to a local video file (required)\n\
+         \x20 --model <path>   Path to ONNX model (default: {DEFAULT_MODEL_PATH})\n\
+         \x20 -h, --help       Show this help"
     );
 }
 
@@ -162,7 +169,7 @@ fn validate_config(config: &Config) -> Result<()> {
 fn validate_regular_file(role: &str, path: &Path) -> Result<()> {
     let metadata = path
         .metadata()
-        .with_context(|| format!("failed to read {role} path metadata"))?;
+        .with_context(|| format!("failed to read {role} path metadata: {}", path.display()))?;
 
     if !metadata.is_file() {
         bail!(
@@ -393,8 +400,10 @@ fn destroy_playback_window() -> Result<()> {
 }
 
 fn run_playback(config: &Config) -> Result<()> {
-    let mut capture = open_video_capture(&config.video)?;
+    // Load the model before opening the video so an unsupported model is reported
+    // without depending on a decodable input, which keeps startup tests asset-free.
     let mut detector = YoloV8Detector::load(&config.model)?;
+    let mut capture = open_video_capture(&config.video)?;
     highgui::named_window(WINDOW_NAME, highgui::WINDOW_AUTOSIZE)
         .context("failed to create display window")?;
 
@@ -448,9 +457,19 @@ fn run_playback(config: &Config) -> Result<()> {
         Ok(())
     })();
 
-    match destroy_playback_window() {
-        Ok(()) => playback_result,
-        Err(cleanup_err) => playback_result.map_err(|process_err| process_err.context(cleanup_err)),
+    let Err(cleanup_err) = destroy_playback_window() else {
+        return playback_result;
+    };
+
+    match playback_result {
+        // Nothing else failed, so the cleanup failure is the failure to report.
+        Ok(()) => Err(cleanup_err),
+        // The processing failure stays the reported error; cleanup is retained
+        // alongside it rather than displacing it as the headline.
+        Err(process_err) => {
+            tracing::error!(error = %format!("{cleanup_err:#}"), "display window cleanup failed");
+            Err(process_err)
+        }
     }
 }
 
@@ -554,13 +573,22 @@ mod tests {
         let model = dir.join("model.onnx");
         fs::write(&model, b"model").expect("failed to write model file");
 
+        let missing_video = dir.join("missing.mp4");
         let config = Config {
-            video: dir.join("missing.mp4"),
+            video: missing_video.clone(),
             model,
         };
 
         let err = validate_config(&config).expect_err("validation should fail");
-        assert!(err.to_string().contains("video"));
+        let message = err.to_string();
+        assert!(
+            message.contains("video"),
+            "expected the failing role: {message}"
+        );
+        assert!(
+            message.contains(&missing_video.display().to_string()),
+            "expected the offending path: {message}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -588,13 +616,22 @@ mod tests {
         let video = dir.join("video.mp4");
         fs::write(&video, b"video").expect("failed to write video file");
 
+        let missing_model = dir.join("missing.onnx");
         let config = Config {
             video,
-            model: dir.join("missing.onnx"),
+            model: missing_model.clone(),
         };
 
         let err = validate_config(&config).expect_err("validation should fail");
-        assert!(err.to_string().contains("model"));
+        let message = err.to_string();
+        assert!(
+            message.contains("model"),
+            "expected the failing role: {message}"
+        );
+        assert!(
+            message.contains(&missing_model.display().to_string()),
+            "expected the offending path: {message}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

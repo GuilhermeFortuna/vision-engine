@@ -1,6 +1,6 @@
 # VE-002 implementation plan: Video decoding and playback
 
-**Status:** `BLOCKED` (authoritative: [`../STATUS.md`](../STATUS.md))  
+**Status:** `DONE` (authoritative: [`../STATUS.md`](../STATUS.md))  
 **Specification:** [`../specs/VE-002-video-decoding-and-playback-spec.md`](../specs/VE-002-video-decoding-and-playback-spec.md)  
 **Depends on:** VE-001
 

@@ -1,6 +1,6 @@
 # VE-001 implementation plan: CLI and runtime foundation
 
-**Status:** `READY` (authoritative: [`../STATUS.md`](../STATUS.md))  
+**Status:** `DONE` (authoritative: [`../STATUS.md`](../STATUS.md))  
 **Specification:** [`../specs/VE-001-cli-and-runtime-foundation-spec.md`](../specs/VE-001-cli-and-runtime-foundation-spec.md)  
 **Depends on:** None
 

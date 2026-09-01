@@ -1,6 +1,6 @@
 # VE-005: Milestone 1 hardening and acceptance
 
-**Status:** `BLOCKED` (authoritative: [`../STATUS.md`](../STATUS.md))  
+**Status:** `READY` (authoritative: [`../STATUS.md`](../STATUS.md))  
 **Project direction:** [`../../../PROJECT.md`](../../../PROJECT.md)  
 **Depends on:** VE-004  
 **Implementation plan:** [`../plans/VE-005-milestone-one-hardening-and-acceptance-plan.md`](../plans/VE-005-milestone-one-hardening-and-acceptance-plan.md)
