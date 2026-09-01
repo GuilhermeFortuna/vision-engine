@@ -6,7 +6,7 @@ use opencv::{
 };
 
 use super::message::TrackedFrame;
-use super::metrics::FrameMetrics;
+use super::metrics::{FrameMetrics, format_depth, format_ms};
 use vision_engine::detector::coco_class_name;
 use vision_engine::tracking::{Track, TrackId, TrackState};
 
@@ -15,7 +15,7 @@ const LABEL_FONT_SCALE: f64 = 0.6;
 const LABEL_THICKNESS: i32 = 1;
 const LABEL_PADDING: i32 = 4;
 const METRICS_AREA_RIGHT: i32 = 250;
-const METRICS_AREA_BOTTOM: i32 = 160;
+const METRICS_AREA_BOTTOM: i32 = 280;
 
 const CONFIRMED_BOX_THICKNESS: i32 = 2;
 const TENTATIVE_BOX_THICKNESS: i32 = 1;
@@ -170,39 +170,67 @@ pub fn draw_metrics_overlay(frame: &mut Mat, metrics: &FrameMetrics) -> Result<(
     let font = imgproc::FONT_HERSHEY_SIMPLEX;
     let scale = 0.8;
     let thickness = 2;
+    let line_height = 30;
+    let mut y = 30;
 
-    let decode_text = format!("Decode: {:.1} ms", metrics.decode_ms);
-    imgproc::put_text(
-        frame,
-        &decode_text,
-        Point::new(10, 30),
-        font,
-        scale,
-        color,
-        thickness,
-        imgproc::LINE_8,
-        false,
-    )?;
+    let lines = [
+        format!("Decode: {} ms", format_ms(Some(metrics.timings.decode_ms))),
+        format!(
+            "Preprocess: {} ms",
+            format_ms(Some(metrics.timings.preprocess_ms))
+        ),
+        format!(
+            "Inference: {} ms",
+            format_ms(Some(metrics.timings.inference_ms))
+        ),
+        format!(
+            "Tracking: {} ms",
+            format_ms(Some(metrics.timings.tracking_ms))
+        ),
+        format!("Render: {} ms", format_ms(Some(metrics.render_ms))),
+        format!(
+            "Decoded: {}",
+            format_depth(
+                metrics.queue_depths.decoded.0,
+                metrics.queue_depths.decoded.1
+            )
+        ),
+        format!(
+            "Prepared: {}",
+            format_depth(
+                metrics.queue_depths.prepared.0,
+                metrics.queue_depths.prepared.1
+            )
+        ),
+        format!(
+            "Detected: {}",
+            format_depth(
+                metrics.queue_depths.detected.0,
+                metrics.queue_depths.detected.1
+            )
+        ),
+        format!(
+            "Tracked: {}",
+            format_depth(
+                metrics.queue_depths.tracked.0,
+                metrics.queue_depths.tracked.1
+            )
+        ),
+        format!(
+            "Renderer throughput: {} fps",
+            match metrics.fps {
+                Some(fps) if fps.is_finite() => format!("{fps:.1}"),
+                _ => "--".to_string(),
+            }
+        ),
+        format!("Tracks: {}", metrics.confirmed_tracks),
+    ];
 
-    let inference_text = format!("Inference: {:.1} ms", metrics.inference_ms);
-    imgproc::put_text(
-        frame,
-        &inference_text,
-        Point::new(10, 60),
-        font,
-        scale,
-        color,
-        thickness,
-        imgproc::LINE_8,
-        false,
-    )?;
-
-    if let Some(fps) = metrics.fps {
-        let fps_text = format!("FPS: {fps:.1}");
+    for line in lines {
         imgproc::put_text(
             frame,
-            &fps_text,
-            Point::new(10, 90),
+            &line,
+            Point::new(10, y),
             font,
             scale,
             color,
@@ -210,33 +238,8 @@ pub fn draw_metrics_overlay(frame: &mut Mat, metrics: &FrameMetrics) -> Result<(
             imgproc::LINE_8,
             false,
         )?;
+        y += line_height;
     }
-
-    let tracking_text = format!("Tracking: {:.1} ms", metrics.tracking_ms);
-    imgproc::put_text(
-        frame,
-        &tracking_text,
-        Point::new(10, 120),
-        font,
-        scale,
-        color,
-        thickness,
-        imgproc::LINE_8,
-        false,
-    )?;
-
-    let tracks_text = format!("Tracks: {}", metrics.confirmed_tracks);
-    imgproc::put_text(
-        frame,
-        &tracks_text,
-        Point::new(10, 150),
-        font,
-        scale,
-        color,
-        thickness,
-        imgproc::LINE_8,
-        false,
-    )?;
 
     Ok(())
 }

@@ -10,8 +10,9 @@ use crate::cli::Config;
 use super::decode::{DecodeStage, DecodeSummary};
 use super::infer::InferStage;
 use super::message::{DecodedFrame, DetectedFrame, PreparedFrame, TrackedFrame};
+use super::metrics::QueueDepths;
 use super::preprocess::prepare;
-use super::queue::{self, QUEUE_CAPACITY, Receiver, Sender, Shutdown};
+use super::queue::{self, QUEUE_CAPACITY, QueueDepthGauge, Receiver, Sender, Shutdown};
 use super::track::TrackStage;
 use vision_engine::tracking::TrackState;
 
@@ -61,6 +62,10 @@ pub struct Pipeline {
     preprocess: StageHandle<()>,
     infer: StageHandle<()>,
     track: StageHandle<u64>,
+    decoded_gauge: QueueDepthGauge<DecodedFrame>,
+    prepared_gauge: QueueDepthGauge<PreparedFrame>,
+    detected_gauge: QueueDepthGauge<DetectedFrame>,
+    tracked_gauge: QueueDepthGauge<TrackedFrame>,
     tracked_rx: Receiver<TrackedFrame>,
     shutdown: Shutdown,
 }
@@ -82,6 +87,11 @@ impl Pipeline {
         let (prepared_tx, prepared_rx) = queue::bounded::<PreparedFrame>(QUEUE_CAPACITY, &shutdown);
         let (detected_tx, detected_rx) = queue::bounded::<DetectedFrame>(QUEUE_CAPACITY, &shutdown);
         let (tracked_tx, tracked_rx) = queue::bounded::<TrackedFrame>(QUEUE_CAPACITY, &shutdown);
+
+        let decoded_gauge = decoded_rx.depth_gauge();
+        let prepared_gauge = prepared_rx.depth_gauge();
+        let detected_gauge = detected_rx.depth_gauge();
+        let tracked_gauge = tracked_rx.depth_gauge();
 
         let video = config.video.clone();
         let loop_for = config.loop_for;
@@ -139,9 +149,22 @@ impl Pipeline {
                 name: STAGE_TRACK,
                 join: track,
             },
+            decoded_gauge,
+            prepared_gauge,
+            detected_gauge,
+            tracked_gauge,
             tracked_rx,
             shutdown,
         })
+    }
+
+    pub fn queue_depths(&self) -> QueueDepths {
+        QueueDepths {
+            decoded: self.decoded_gauge.snapshot(),
+            prepared: self.prepared_gauge.snapshot(),
+            detected: self.detected_gauge.snapshot(),
+            tracked: self.tracked_gauge.snapshot(),
+        }
     }
 
     pub fn next_tracked(&self) -> Option<TrackedFrame> {

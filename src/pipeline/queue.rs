@@ -74,6 +74,31 @@ pub struct Receiver<T> {
     shared: Arc<Shared<T>>,
 }
 
+#[derive(Clone)]
+pub struct QueueDepthGauge<T> {
+    shared: Arc<Shared<T>>,
+}
+
+impl<T> QueueDepthGauge<T> {
+    pub fn snapshot(&self) -> (usize, usize) {
+        let depth = self
+            .shared
+            .queue
+            .lock()
+            .expect("queue mutex poisoned")
+            .len();
+        (depth, self.shared.capacity)
+    }
+}
+
+impl<T> Receiver<T> {
+    pub fn depth_gauge(&self) -> QueueDepthGauge<T> {
+        QueueDepthGauge {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+}
+
 pub fn bounded<T>(capacity: usize, shutdown: &Shutdown) -> (Sender<T>, Receiver<T>) {
     let wake = Arc::new(QueueWake {
         not_empty: Condvar::new(),

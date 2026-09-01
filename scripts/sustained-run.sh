@@ -36,7 +36,7 @@ if [[ ! -x "$release_bin" ]]; then
     exit 2
 fi
 
-printf 'elapsed_seconds,rss_kb,frame_count,live_track_count,confirmed_track_count\n' > "$csv_file"
+printf 'elapsed_seconds,rss_kb,frame_count,live_track_count,confirmed_track_count,decode_ms,preprocess_ms,inference_ms,tracking_ms,render_ms,decoded_depth,prepared_depth,detected_depth,tracked_depth\n' > "$csv_file"
 "$release_bin" "$video" --model "$model" --loop-for-seconds "$duration_seconds" >"$log_file" 2>&1 &
 pid=$!
 started_at=$(date +%s)
@@ -64,13 +64,17 @@ for sample in $(seq 0 $((sample_count - 1))); do
         | grep 'tracking progress' \
         | tail -n 1 \
         | sed -n 's/.*frame_count=\([0-9][0-9]*\).*live_tracks=\([0-9][0-9]*\).*confirmed_tracks=\([0-9][0-9]*\).*/\1,\2,\3/p' || true)
-    if [[ -z "$rss_kb" || -z "$progress" ]]; then
-        echo "missing RSS or progress metrics at ${target_elapsed}s; logs: $log_file" >&2
+    instrumentation=$(strip_ansi < "$log_file" \
+        | grep 'instrumentation progress' \
+        | tail -n 1 \
+        | sed -n 's/.*decode_ms=\([0-9.][0-9.]*\).*preprocess_ms=\([0-9.][0-9.]*\).*inference_ms=\([0-9.][0-9.]*\).*tracking_ms=\([0-9.][0-9.]*\).*render_ms=\([0-9.][0-9.]*\).*decoded_depth=\([0-9/][0-9/]*\).*prepared_depth=\([0-9/][0-9/]*\).*detected_depth=\([0-9/][0-9/]*\).*tracked_depth=\([0-9/][0-9/]*\).*/\1,\2,\3,\4,\5,\6,\7,\8,\9/p' || true)
+    if [[ -z "$rss_kb" || -z "$progress" || -z "$instrumentation" ]]; then
+        echo "missing RSS, progress, or instrumentation metrics at ${target_elapsed}s; logs: $log_file" >&2
         exit 1
     fi
 
     actual_elapsed=$(( $(date +%s) - started_at ))
-    printf '%s,%s,%s\n' "$actual_elapsed" "$rss_kb" "$progress" >> "$csv_file"
+    printf '%s,%s,%s,%s\n' "$actual_elapsed" "$rss_kb" "$progress" "$instrumentation" >> "$csv_file"
 done
 
 cleanup
