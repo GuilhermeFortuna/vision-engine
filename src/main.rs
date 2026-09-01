@@ -1,8 +1,11 @@
+mod detector;
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use detector::YoloV8Detector;
 use opencv::{
     core::{Point, Scalar},
     highgui, imgproc,
@@ -192,7 +195,12 @@ fn should_exit(key: i32) -> bool {
     key == 27 || key == i32::from(b'q') || key == i32::from(b'Q')
 }
 
-fn draw_metrics_overlay(frame: &mut Mat, decode_ms: f64, fps: Option<f64>) -> Result<()> {
+fn draw_metrics_overlay(
+    frame: &mut Mat,
+    decode_ms: f64,
+    inference_ms: f64,
+    fps: Option<f64>,
+) -> Result<()> {
     let decode_text = format!("Decode: {decode_ms:.1} ms");
     imgproc::put_text(
         frame,
@@ -206,12 +214,25 @@ fn draw_metrics_overlay(frame: &mut Mat, decode_ms: f64, fps: Option<f64>) -> Re
         false,
     )?;
 
+    let inference_text = format!("Inference: {inference_ms:.1} ms");
+    imgproc::put_text(
+        frame,
+        &inference_text,
+        Point::new(10, 60),
+        imgproc::FONT_HERSHEY_SIMPLEX,
+        0.8,
+        Scalar::new(0.0, 255.0, 0.0, 0.0),
+        2,
+        imgproc::LINE_8,
+        false,
+    )?;
+
     if let Some(fps) = fps {
         let fps_text = format!("FPS: {fps:.1}");
         imgproc::put_text(
             frame,
             &fps_text,
-            Point::new(10, 60),
+            Point::new(10, 90),
             imgproc::FONT_HERSHEY_SIMPLEX,
             0.8,
             Scalar::new(0.0, 255.0, 0.0, 0.0),
@@ -230,6 +251,7 @@ fn destroy_playback_window() -> Result<()> {
 
 fn run_playback(config: &Config) -> Result<()> {
     let mut capture = open_video_capture(&config.video)?;
+    let mut detector = YoloV8Detector::load(&config.model)?;
     highgui::named_window(WINDOW_NAME, highgui::WINDOW_AUTOSIZE)
         .context("failed to create display window")?;
 
@@ -249,11 +271,20 @@ fn run_playback(config: &Config) -> Result<()> {
                 break;
             }
 
+            let inference_result = detector.infer(&frame)?;
+            let _ = inference_result.output;
+            let _ = inference_result.transform;
+
             let now = Instant::now();
             rolling_fps.record_frame(now.duration_since(last_iteration_end));
             last_iteration_end = now;
 
-            draw_metrics_overlay(&mut frame, decode_ms, rolling_fps.displayed_fps())?;
+            draw_metrics_overlay(
+                &mut frame,
+                decode_ms,
+                inference_result.inference_ms,
+                rolling_fps.displayed_fps(),
+            )?;
             highgui::imshow(WINDOW_NAME, &frame).context("failed to display video frame")?;
 
             if should_exit(highgui::wait_key(1)?) {
