@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "semantic-search": {
+      "command": "uv",
+      "args": ["run", "python", "server.py"],
+      "cwd": "tools/semantic-search"
+    }
+  }
+}
