@@ -14,8 +14,8 @@
 | [VE-011](specs/VE-011-milestone-two-hardening-and-acceptance-spec.md) / [Plan](plans/VE-011-milestone-two-hardening-and-acceptance-plan.md)     | 02    | `DONE`    | VE-010     | Deterministic ID evidence and verified Milestone 2 acceptance     |
 | [VE-012](specs/VE-012-pipeline-stage-extraction-spec.md) / [Plan](plans/VE-012-pipeline-stage-extraction-plan.md)                               | 03    | `DONE`    | VE-011     | Stage modules, serial execution preserved, and a locked baseline  |
 | [VE-013](specs/VE-013-frame-messages-and-bounded-queues-spec.md) / [Plan](plans/VE-013-frame-messages-and-bounded-queues-plan.md)               | 03    | `DONE`    | VE-012     | Concrete frame messages and a blocking bounded queue              |
-| [VE-014](specs/VE-014-threaded-pipeline-runtime-spec.md) / [Plan](plans/VE-014-threaded-pipeline-runtime-plan.md)                               | 03    | `READY`   | VE-013     | Stage threads, backpressure, shutdown, and baseline parity        |
-| [VE-015](specs/VE-015-pipeline-instrumentation-spec.md) / [Plan](plans/VE-015-pipeline-instrumentation-plan.md)                                 | 03    | `BLOCKED` | VE-014     | Per-stage latency, queue depth, and named bottleneck reporting    |
+| [VE-014](specs/VE-014-threaded-pipeline-runtime-spec.md) / [Plan](plans/VE-014-threaded-pipeline-runtime-plan.md)                               | 03    | `DONE`    | VE-013     | Stage threads, backpressure, shutdown, and baseline parity        |
+| [VE-015](specs/VE-015-pipeline-instrumentation-spec.md) / [Plan](plans/VE-015-pipeline-instrumentation-plan.md)                                 | 03    | `READY`   | VE-014     | Per-stage latency, queue depth, and named bottleneck reporting    |
 | [VE-016](specs/VE-016-milestone-three-hardening-and-acceptance-spec.md) / [Plan](plans/VE-016-milestone-three-hardening-and-acceptance-plan.md) | 03    | `BLOCKED` | VE-015     | Verified parity, measured speedup, and Milestone 3 acceptance     |
 
 
