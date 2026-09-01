@@ -1,13 +1,15 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use opencv::{
     core::{Point, Rect, Scalar},
-    imgproc,
+    highgui, imgproc,
     prelude::*,
 };
 
+use super::metrics::FrameMetrics;
 use vision_engine::detector::coco_class_name;
 use vision_engine::tracking::{Track, TrackId, TrackState};
 
+const WINDOW_NAME: &str = "vision-engine";
 const LABEL_FONT_SCALE: f64 = 0.6;
 const LABEL_THICKNESS: i32 = 1;
 const LABEL_PADDING: i32 = 4;
@@ -21,13 +23,51 @@ const COLOR_SATURATION: f64 = 0.8;
 const COLOR_VALUE: f64 = 0.9;
 const GOLDEN_RATIO: f64 = 0.618_033_988_75;
 
-#[derive(Debug, Clone, Copy)]
-pub struct FrameMetrics {
-    pub decode_ms: f64,
-    pub inference_ms: f64,
-    pub tracking_ms: f64,
-    pub fps: Option<f64>,
-    pub confirmed_tracks: usize,
+pub struct RenderStage {}
+
+pub enum Presentation {
+    Continue,
+    QuitRequested,
+}
+
+impl RenderStage {
+    pub fn open() -> Result<Self> {
+        highgui::named_window(WINDOW_NAME, highgui::WINDOW_AUTOSIZE)
+            .context("failed to create display window")?;
+        Ok(Self {})
+    }
+
+    pub fn present(
+        &mut self,
+        frame: &mut Mat,
+        tracks: &[Track],
+        metrics: &FrameMetrics,
+    ) -> Result<Presentation> {
+        draw_tracks(frame, tracks).context("failed to draw track overlays")?;
+        draw_metrics_overlay(frame, metrics)
+            .context("failed to draw performance metrics overlay")?;
+        highgui::imshow(WINDOW_NAME, frame).context("failed to display video frame")?;
+
+        let key = highgui::wait_key(1).context("failed to poll keyboard events")?;
+        if should_exit(key) {
+            Ok(Presentation::QuitRequested)
+        } else {
+            Ok(Presentation::Continue)
+        }
+    }
+
+    pub fn close(self) -> Result<()> {
+        highgui::destroy_window(WINDOW_NAME).context("failed to destroy display window")
+    }
+}
+
+fn should_exit(key: i32) -> bool {
+    if key == -1 {
+        return false;
+    }
+
+    let key = key & 0xFF;
+    key == 27 || key == i32::from(b'q') || key == i32::from(b'Q')
 }
 
 pub fn draw_tracks(frame: &mut Mat, tracks: &[Track]) -> Result<()> {
@@ -306,6 +346,31 @@ mod tests {
             hits: 1,
             misses: 0,
         }
+    }
+
+    #[test]
+    fn escape_exits() {
+        assert!(should_exit(27));
+    }
+
+    #[test]
+    fn lowercase_q_exits() {
+        assert!(should_exit(113));
+    }
+
+    #[test]
+    fn uppercase_q_exits() {
+        assert!(should_exit(81));
+    }
+
+    #[test]
+    fn no_key_continues() {
+        assert!(!should_exit(-1));
+    }
+
+    #[test]
+    fn other_key_continues() {
+        assert!(!should_exit(65));
     }
 
     #[test]
