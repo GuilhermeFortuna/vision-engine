@@ -55,7 +55,7 @@ pub enum DecodeOutcome {
     EndOfRun,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct DecodeSummary {
     pub last_stamp: Option<FrameStamp>,
     pub frame_count: u64,

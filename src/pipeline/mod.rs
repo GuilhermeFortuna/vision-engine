@@ -3,9 +3,9 @@ mod infer;
 mod message;
 mod metrics;
 mod preprocess;
-#[allow(dead_code)]
 mod queue;
 mod render;
+mod runtime;
 mod track;
 mod track_dump;
 
@@ -17,20 +17,16 @@ use vision_engine::tracking::TrackState;
 
 use crate::cli::Config;
 
-use decode::{DecodeStage, log_playback_summary};
-use infer::InferStage;
+use decode::log_playback_summary;
 use metrics::{FrameMetrics, RollingFps};
-use preprocess::prepare;
 use render::{Presentation, RenderStage};
-use track::TrackStage;
+use runtime::Pipeline;
 use track_dump::TrackDump;
 
 pub fn run(config: &Config) -> Result<()> {
     let model = LoadedModel::load(&config.model)?;
-    let mut infer_stage = InferStage::new(model);
-    let mut decode = DecodeStage::open(&config.video, config.loop_for, config.max_frames)?;
     let mut render = RenderStage::open()?;
-    let mut track_stage = TrackStage::new();
+    let pipeline = Pipeline::spawn(config, model)?;
     let mut rolling_fps = RollingFps::new();
     let mut last_iteration_end = Instant::now();
     let mut track_dump = config
@@ -39,51 +35,59 @@ pub fn run(config: &Config) -> Result<()> {
         .map(|path| TrackDump::create(path))
         .transpose()?;
 
-    let playback_result = (|| -> Result<()> {
-        loop {
-            let Some(decoded) = decode.next()? else {
+    let mut playback_result: Result<()> = Ok(());
+    while playback_result.is_ok() {
+        let Some(tracked) = pipeline.next_tracked() else {
+            break;
+        };
+
+        let now = Instant::now();
+        rolling_fps.record_frame(now.duration_since(last_iteration_end));
+        last_iteration_end = now;
+
+        let confirmed_tracks = tracked
+            .tracks
+            .iter()
+            .filter(|track| track.state == TrackState::Confirmed)
+            .count();
+
+        if let Some(dump) = track_dump.as_mut()
+            && let Err(err) = dump.write_frame(tracked.stamp, &tracked.tracks)
+        {
+            playback_result = Err(err);
+            break;
+        }
+
+        let metrics = FrameMetrics {
+            decode_ms: tracked.timings.decode_ms,
+            inference_ms: tracked.timings.inference_ms,
+            tracking_ms: tracked.timings.tracking_ms,
+            fps: rolling_fps.displayed_fps(),
+            confirmed_tracks,
+        };
+
+        match render.present(tracked, &metrics) {
+            Ok(Presentation::Continue) => {}
+            Ok(Presentation::QuitRequested) => break,
+            Err(err) => {
+                playback_result = Err(err);
                 break;
-            };
-            let prepared = prepare(decoded)?;
-            let detected = infer_stage.detect(prepared)?;
-            let tracked = track_stage.update(detected)?;
-
-            let now = Instant::now();
-            rolling_fps.record_frame(now.duration_since(last_iteration_end));
-            last_iteration_end = now;
-
-            let confirmed_tracks = tracked
-                .tracks
-                .iter()
-                .filter(|track| track.state == TrackState::Confirmed)
-                .count();
-            track_stage.maybe_log_progress(tracked.stamp, confirmed_tracks);
-
-            if let Some(dump) = track_dump.as_mut() {
-                dump.write_frame(tracked.stamp, &tracked.tracks)?;
-            }
-
-            let metrics = FrameMetrics {
-                decode_ms: tracked.timings.decode_ms,
-                inference_ms: tracked.timings.inference_ms,
-                tracking_ms: tracked.timings.tracking_ms,
-                fps: rolling_fps.displayed_fps(),
-                confirmed_tracks,
-            };
-
-            match render.present(tracked, &metrics)? {
-                Presentation::Continue => {}
-                Presentation::QuitRequested => break,
             }
         }
+    }
 
-        let summary = decode.summary();
-        log_playback_summary(&summary, track_stage.rejected_updates());
-        if let Some(dump) = track_dump {
-            dump.finish()?;
+    pipeline.request_shutdown();
+    let join_result = pipeline.join();
+    if playback_result.is_ok() {
+        if let Ok(stats) = join_result {
+            log_playback_summary(&stats.decode_summary, stats.rejected_updates);
+            if let Some(dump) = track_dump {
+                playback_result = dump.finish();
+            }
+        } else if let Err(err) = join_result {
+            playback_result = Err(err);
         }
-        Ok(())
-    })();
+    }
 
     let Err(cleanup_err) = render.close() else {
         return playback_result;

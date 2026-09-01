@@ -159,6 +159,7 @@ impl<T> Receiver<T> {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn len(&self) -> usize {
         self.shared
             .queue
@@ -167,6 +168,7 @@ impl<T> Receiver<T> {
             .len()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn capacity(&self) -> usize {
         self.shared.capacity
     }
