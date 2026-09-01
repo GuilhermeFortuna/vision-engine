@@ -211,6 +211,23 @@ def extract_chunks_from_source(rel_path: str, source: str) -> list[Chunk]:
                         module_path=module_path,
                     )
                 )
+        elif node.type == "const_item":
+            if not has_cfg_test_attribute(production_source, node):
+                name = type_name(node, production_source)
+                if name:
+                    chunks.append(
+                        Chunk(
+                            path=rel_path,
+                            symbol=name,
+                            kind="const",
+                            line_start=line_number(production_source, node.start_byte),
+                            line_end=line_number(production_source, node.end_byte),
+                            signature=node_text(production_source, node).strip(),
+                            doc=leading_doc_comment(production_source, node),
+                            body=node_text(production_source, node),
+                            module_path=module_path,
+                        )
+                    )
 
         for child in node.children:
             walk(child)

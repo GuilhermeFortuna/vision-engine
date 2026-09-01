@@ -91,5 +91,42 @@
     "expected": [
       {"path": "src/pipeline/runtime.rs", "symbol": "FaultConfig"}
     ]
+  },
+  {
+    "phase": 5,
+    "top_k": 8,
+    "query": "VE-015 pipeline instrumentation RunStats overlay",
+    "expected": [
+      {"path": "docs/development/specs/VE-015-pipeline-instrumentation-spec.md"},
+      {"path": "src/pipeline/metrics.rs", "symbol": "RunStats"},
+      {"path": "scripts/sustained-run.sh", "symbol": "sustained-run"}
+    ]
+  },
+  {
+    "phase": 5,
+    "top_k": 8,
+    "query": "METRICS_AREA_BOTTOM overlay draw metrics",
+    "expected": [
+      {"path": "src/pipeline/render.rs", "symbol": "METRICS_AREA_BOTTOM"},
+      {"path": "src/pipeline/render.rs", "symbol": "draw_metrics_overlay"}
+    ]
+  },
+  {
+    "phase": 5,
+    "top_k": 8,
+    "query": "sustained-run instrumentation columns csv",
+    "path_prefix": "scripts/",
+    "expected": [
+      {"path": "scripts/sustained-run.sh", "symbol": "sustained-run"}
+    ]
+  },
+  {
+    "phase": 5,
+    "top_k": 8,
+    "query": "Where are StageTimings measured pipeline messages",
+    "expected": [
+      {"path": "src/pipeline/message.rs", "symbol": "StageTimings"},
+      {"path": "src/pipeline/message.rs", "symbol": "TrackedFrame"}
+    ]
   }
 ]

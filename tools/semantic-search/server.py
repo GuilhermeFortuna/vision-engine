@@ -29,7 +29,7 @@ def semantic_code_search(
     ] = None,
     kind: Annotated[
         str | None,
-        Field(description="Optional kind filter: fn, struct, enum, impl, mod, doc"),
+        Field(description="Optional kind filter: fn, struct, enum, impl, const, mod, script, doc, plan_ref"),
     ] = None,
 ) -> dict[str, object]:
     """Search production Rust code and development docs with hybrid retrieval."""
@@ -57,7 +57,7 @@ def task_context(
         str | None,
         Field(description="Alias for ve_id, e.g. 'VE-014'"),
     ] = None,
-    top_k: Annotated[int, Field(description="Maximum number of results to return", ge=1)] = 5,
+    top_k: Annotated[int, Field(description="Maximum number of results to return", ge=1)] = 8,
 ) -> dict[str, object]:
     """Return VE spec/plan sections and related code chunks for a task id."""
     resolved = ve_id or task_id

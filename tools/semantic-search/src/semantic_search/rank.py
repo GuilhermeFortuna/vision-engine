@@ -19,7 +19,10 @@ KIND_WEIGHTS = {
     "struct": 0.95,
     "enum": 0.95,
     "impl": 0.9,
+    "const": 1.1,
     "mod": 0.85,
+    "script": 1.0,
+    "plan_ref": 0.9,
     "doc": 0.75,
 }
 
@@ -54,8 +57,29 @@ ORCHESTRATION_QUERY_TOKENS = frozenset(
         "runtime",
         "orchestrat",
         "next",
+        "pipeline",
+        "serial",
+        "loop",
     }
 )
+
+INSTRUMENTATION_QUERY_TOKENS = frozenset(
+    {
+        "overlay",
+        "metrics",
+        "instrument",
+        "queue_depth",
+        "queue",
+        "depth",
+        "runstats",
+        "percentile",
+        "summary",
+        "throughput",
+        "fps",
+    }
+)
+
+PERIPHERAL_SYMBOLS = frozenset({"open", "new", "default"})
 
 
 def kind_weight(chunk: Chunk, query: str) -> float:
@@ -66,6 +90,8 @@ def kind_weight(chunk: Chunk, query: str) -> float:
             return 1.0
         if any(hint in lowered for hint in CODE_QUERY_HINTS):
             return 0.35
+    if chunk.kind == "script" and "scripts/" in lowered:
+        return 1.2
     return weight
 
 
@@ -176,6 +202,8 @@ def rank_chunks(
 
     query_tokens = expand_query_tokens(tokenize(query))
     orchestration_query = bool(query_tokens & ORCHESTRATION_QUERY_TOKENS)
+    instrumentation_query = bool(query_tokens & INSTRUMENTATION_QUERY_TOKENS)
+    message_query = bool(query_tokens & {"message", "messages", "timings", "stamp"})
     corpus_tokens = [tokenize(chunk.search_text()) for chunk in filtered]
     bm25 = BM25Okapi(corpus_tokens)
     bm25_scores = bm25.get_scores(tokenize(query)).tolist()
@@ -202,7 +230,30 @@ def rank_chunks(
             + 0.1 * body_overlap_score(query_tokens, chunk)
         )
         fused *= kind_weight(chunk, query)
-        if orchestration_query:
+
+        if chunk.kind == "plan_ref" and any(hint in query.lower() for hint in CODE_QUERY_HINTS):
+            fused *= 0.6
+        if chunk.kind == "const" and chunk.symbol.lower() in query_tokens:
+            fused *= 1.35
+        if chunk.kind == "script" and path_prefix and path_prefix.startswith("scripts/"):
+            fused *= 1.2
+
+        if instrumentation_query:
+            if chunk.path.endswith("metrics.rs"):
+                fused *= 1.25
+            if chunk.path.endswith("render.rs"):
+                fused *= 1.15
+            if chunk.symbol in {
+                "draw_metrics_overlay",
+                "log_playback_summary",
+                "log_instrumentation_summary",
+                "RunStats",
+                "QueueDepths",
+                "METRICS_AREA_BOTTOM",
+            }:
+                fused *= 1.2
+
+        if orchestration_query and not message_query:
             if chunk.path.endswith("runtime.rs"):
                 fused *= 1.35
             if chunk.kind == "fn" and chunk.symbol in {
@@ -214,6 +265,8 @@ def rank_chunks(
                 fused *= 1.2
             if chunk.kind == "struct" and chunk.symbol in {"Pipeline", "FaultConfig"}:
                 fused *= 1.1
+            if chunk.kind == "struct" and chunk.symbol == "Pipeline" and "pipeline" in query_tokens:
+                fused *= 1.35
         if chunk.path.endswith("queue.rs") and chunk.symbol in query_tokens:
             fused *= 1.2
         if chunk.symbol == "request" and {"send", "recv", "shutdown"} & query_tokens:
@@ -226,6 +279,19 @@ def rank_chunks(
             fused *= 1.5
         if chunk.path.endswith("message.rs") and "mat" in query_tokens:
             fused *= 1.1
+
+        if message_query and chunk.path.endswith("message.rs"):
+            fused *= 1.2
+        if message_query and chunk.symbol in {"StageTimings", "TrackedFrame", "DecodedFrame"}:
+            fused *= 1.15
+
+        if (
+            len(query_tokens) >= 2
+            and chunk.symbol in PERIPHERAL_SYMBOLS
+            and chunk.symbol.lower() not in query_tokens
+        ):
+            fused *= 0.85
+
         reasons = match_reasons(
             query_tokens,
             chunk,
@@ -238,9 +304,17 @@ def rank_chunks(
     ranked.sort(
         key=lambda item: (
             -item.score,
-            {"fn": 0, "struct": 1, "enum": 2, "impl": 3, "mod": 4, "doc": 5}.get(
-                item.chunk.kind, 9
-            ),
+            {
+                "fn": 0,
+                "const": 1,
+                "struct": 2,
+                "enum": 3,
+                "impl": 4,
+                "mod": 5,
+                "script": 6,
+                "plan_ref": 7,
+                "doc": 8,
+            }.get(item.chunk.kind, 9),
             item.chunk.symbol,
         )
     )

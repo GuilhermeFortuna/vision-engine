@@ -27,6 +27,15 @@ pub fn prepare(frame: DecodedFrame) -> Result<()> {
     assert symbols["prepare"] == "fn"
 
 
+def test_extract_rust_finds_const() -> None:
+    source = """
+const METRICS_AREA_BOTTOM: i32 = 280;
+"""
+    chunks = extract_chunks_from_source("src/pipeline/render.rs", source)
+    symbols = {chunk.symbol: chunk.kind for chunk in chunks}
+    assert symbols["METRICS_AREA_BOTTOM"] == "const"
+
+
 def test_extract_docs_finds_ve_id_and_sections(tmp_path: Path) -> None:
     rel_path = "docs/development/specs/VE-013-frame-messages-and-bounded-queues-spec.md"
     file_path = tmp_path / rel_path

@@ -10,15 +10,25 @@ from pathlib import Path
 from semantic_search.chunks import Chunk
 from semantic_search.embed import embed_texts
 from semantic_search.extract_docs import extract_doc_chunks
+from semantic_search.extract_plan_artifacts import (
+    PlanArtifacts,
+    build_plan_artifacts,
+    load_plan_artifacts,
+    plan_ref_chunks,
+    save_plan_artifacts,
+)
 from semantic_search.extract_rust import extract_rust_chunks
+from semantic_search.extract_scripts import extract_script_chunks
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache"
 CACHE_FILE = CACHE_DIR / "index.json"
-INDEX_VERSION = 2
+PLAN_ARTIFACTS_FILE = CACHE_DIR / "plan_artifacts.json"
+INDEX_VERSION = 3
 
 SOURCE_PATTERNS = [
     "src/**/*.rs",
+    "scripts/**/*.sh",
     "docs/development/specs/VE-*.md",
     "docs/development/plans/VE-*.md",
     "AGENTS.md",
@@ -125,7 +135,11 @@ def index_response_meta(
 
 def build_chunks(repo_root: Path) -> list[Chunk]:
     chunks = extract_rust_chunks(repo_root)
+    chunks.extend(extract_script_chunks(repo_root))
     chunks.extend(extract_doc_chunks(repo_root))
+    artifacts = build_plan_artifacts(repo_root)
+    save_plan_artifacts(artifacts)
+    chunks.extend(plan_ref_chunks(artifacts))
     if not chunks:
         return []
 
@@ -234,9 +248,19 @@ def reindex() -> dict[str, object]:
     return {
         "status": "ok",
         "cache_file": str(CACHE_FILE),
+        "plan_artifacts_file": str(PLAN_ARTIFACTS_FILE),
         "index": index_response_meta(
             index_load.meta,
             reindexed=True,
             files_changed_since_index=0,
         ),
     }
+
+
+def get_plan_artifacts(repo_root: Path = REPO_ROOT) -> dict[str, PlanArtifacts]:
+    artifacts = load_plan_artifacts()
+    if artifacts:
+        return artifacts
+    artifacts = build_plan_artifacts(repo_root)
+    save_plan_artifacts(artifacts)
+    return artifacts

@@ -64,7 +64,13 @@ Default behavior:
 - When you already know the symbol, path, or filename, use grep or direct file reads instead.
 - Verify hits using `line_start` / `line_end` and inspect call sites before treating results as authoritative.
 
-Search tools return a wrapped response with `results` and `index` metadata. Check `index.reindexed` and `index.files_changed_since_index` during active implementation — the index auto-rebuilds when tracked files change, but grep/read remain authoritative once symbols are known.
+Search tools return a wrapped response with `results`, `index` metadata, and (for `task_context`) a `touchpoints` field listing plan-named files and symbols. Check `index.reindexed` and `index.files_changed_since_index` during active implementation — the index auto-rebuilds when tracked files change, but grep/read remain authoritative once symbols are known.
+
+After `task_context(ve_id="VE-...")`:
+
+1. Grep `touchpoints.symbols` and `touchpoints.files` from the response (or the plan Interfaces section).
+2. Run at most 1–2 `semantic_code_search` calls for architecture questions, using `path_prefix`.
+3. Switch to grep/read for implementation; do not repeat semantic search for known symbols.
 
 Do not treat MCP results as authoritative by themselves. Verify surrounding code when correctness depends on call sites, types, configuration, or cross-function behavior.
 
@@ -73,7 +79,7 @@ Do not use semantic search for:
 - exact filename or path lookups
 - exact symbol searches when the symbol name is already known
 
-The tool indexes production Rust items under `src/**/*.rs` (functions, structs, enums, impls), VE specs/plans under `docs/development/`, plus `AGENTS.md` and `PROJECT.md`. Test-only code is excluded. Embeddings use the local Ollama model `qwen3-embedding:4b`.
+The tool indexes production Rust items under `src/**/*.rs` (functions, structs, enums, impls, consts), shell scripts under `scripts/**/*.sh`, VE specs/plans under `docs/development/`, plus `AGENTS.md` and `PROJECT.md`. Test-only code is excluded. Embeddings use the local Ollama model `qwen3-embedding:4b`.
 
 ---
 
