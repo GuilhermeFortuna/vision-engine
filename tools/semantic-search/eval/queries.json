@@ -1,0 +1,66 @@
+[
+  {
+    "phase": 1,
+    "query": "serial pipeline loop decode infer track",
+    "expected": [
+      {"path": "src/pipeline/mod.rs", "symbol": "run"}
+    ]
+  },
+  {
+    "phase": 1,
+    "query": "bounded queue send recv shutdown",
+    "expected": [
+      {"path": "src/pipeline/queue.rs", "symbol": "send"},
+      {"path": "src/pipeline/queue.rs", "symbol": "recv"},
+      {"path": "src/pipeline/queue.rs", "symbol": "bounded"}
+    ]
+  },
+  {
+    "phase": 1,
+    "query": "frame message types stamp timings",
+    "expected": [
+      {"path": "src/pipeline/message.rs", "symbol": "DecodedFrame"},
+      {"path": "src/pipeline/message.rs", "symbol": "StageTimings"}
+    ]
+  },
+  {
+    "phase": 2,
+    "query": "StageTimings decode preprocess inference",
+    "expected": [
+      {"path": "src/pipeline/message.rs", "symbol": "StageTimings"}
+    ]
+  },
+  {
+    "phase": 2,
+    "query": "Shutdown request wake blocked send recv",
+    "expected": [
+      {"path": "src/pipeline/queue.rs", "symbol": "Shutdown"},
+      {"path": "src/pipeline/queue.rs", "symbol": "send"},
+      {"path": "src/pipeline/queue.rs", "symbol": "recv"}
+    ]
+  },
+  {
+    "phase": 2,
+    "query": "OpenCV Mat ownership between threads",
+    "expected": [
+      {"path": "src/pipeline/message.rs", "symbol": "DecodedFrame"}
+    ]
+  },
+  {
+    "phase": 3,
+    "query": "VE-013 frame messages bounded queues",
+    "expected": [
+      {"path": "docs/development/specs/VE-013-frame-messages-and-bounded-queues-spec.md"},
+      {"path": "docs/development/plans/VE-013-frame-messages-and-bounded-queues-plan.md"}
+    ]
+  },
+  {
+    "phase": 3,
+    "query": "VE-014 threaded pipeline shutdown",
+    "expected": [
+      {"path": "docs/development/specs/VE-014-threaded-pipeline-runtime-spec.md"},
+      {"path": "docs/development/plans/VE-014-threaded-pipeline-runtime-plan.md"},
+      {"path": "src/pipeline/queue.rs", "symbol": "Shutdown"}
+    ]
+  }
+]

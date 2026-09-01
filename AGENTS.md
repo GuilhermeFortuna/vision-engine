@@ -48,15 +48,20 @@ Do not infer milestone progression or begin follow-up work unless explicitly req
 
 ## Semantic Code Search
 
-Use the local semantic code-search MCP to retrieve the most relevant production Rust functions before broader repository exploration.
+Use the local semantic code-search MCP for **conceptual and architecture** questions before broad repository exploration.
 
-Tool: `semantic_code_search`
+Tools:
+
+- `semantic_code_search` — hybrid retrieval over Rust code and development docs
+- `task_context` — VE spec/plan sections plus related code for a task id (e.g. `VE-013`)
+- `reindex` — force a full index rebuild after large refactors
 
 Default behavior:
 
-- For code-understanding, debugging, architecture review, or locating implementation logic, call `semantic_code_search` first.
-- Use `top_k=3` unless there is a clear reason to request more.
-- Inspect returned functions before falling back to grep, broad file reads, or repository-wide searches.
+- For architecture, stage boundaries, or “where does X happen?” questions, call `semantic_code_search` first with `top_k=8`.
+- For numbered `VE-...` tasks, call `task_context` with the task id before reading specs manually.
+- When you already know the symbol, path, or filename, use grep or direct file reads instead.
+- Verify hits using `line_start` / `line_end` and inspect call sites before treating results as authoritative.
 
 Do not treat MCP results as authoritative by themselves. Verify surrounding code when correctness depends on call sites, types, configuration, or cross-function behavior.
 
@@ -64,9 +69,8 @@ Do not use semantic search for:
 
 - exact filename or path lookups
 - exact symbol searches when the symbol name is already known
-- non-code files unless needed
 
-The tool searches production Rust functions under `src/**/*.rs`, excludes test-only code, and uses the local Ollama model `qwen3-embedding:4b`.
+The tool indexes production Rust items under `src/**/*.rs` (functions, structs, enums, impls), VE specs/plans under `docs/development/`, plus `AGENTS.md` and `PROJECT.md`. Test-only code is excluded. Embeddings use the local Ollama model `qwen3-embedding:4b`.
 
 ---
 

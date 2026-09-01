@@ -1,7 +1,7 @@
 [project]
 name = "semantic-search"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Hybrid semantic code search MCP for Vision Engine"
 readme = "README.md"
 authors = [
     { name = "Guilherme Fortuna", email = "guilhermefortuna.dev@gmail.com" }
@@ -9,6 +9,14 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "mcp[cli]>=2.1.1",
+    "rank-bm25>=0.2.2",
+    "tree-sitter>=0.24.0",
+    "tree-sitter-rust>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
 ]
 
 [project.scripts]
@@ -17,3 +25,6 @@ semantic-search = "semantic_search:main"
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

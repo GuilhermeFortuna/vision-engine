@@ -5,3 +5,5 @@ models/*.pt
 .venv-export/
 __pycache__/
 *.pyc
+tools/semantic-search/.cache/
+tools/semantic-search/.venv/
