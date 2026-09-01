@@ -2,9 +2,9 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
+use crate::tracking::clock::FrameStamp;
+use crate::tracking::{Track, TrackState};
 use anyhow::{Context, Result};
-use vision_engine::tracking::clock::FrameStamp;
-use vision_engine::tracking::{Track, TrackState};
 
 const HEADER: &str =
     "frame_index,media_ms,track_id,class_id,state,x_min,y_min,x_max,y_max,confidence";
@@ -64,9 +64,9 @@ impl TrackDump {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tracking::clock::TimeSource;
+    use crate::tracking::{BBox, TrackId};
     use std::io::Read;
-    use vision_engine::tracking::clock::TimeSource;
-    use vision_engine::tracking::{BBox, TrackId};
 
     fn sample_stamp(index: u64, media_ms: f64) -> FrameStamp {
         FrameStamp {

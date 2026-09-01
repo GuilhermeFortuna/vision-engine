@@ -7,8 +7,8 @@ use opencv::{
 
 use super::message::TrackedFrame;
 use super::metrics::{FrameMetrics, format_depth, format_ms};
-use vision_engine::detector::coco_class_name;
-use vision_engine::tracking::{Track, TrackId, TrackState};
+use crate::detector::coco_class_name;
+use crate::tracking::{Track, TrackId, TrackState};
 
 const WINDOW_NAME: &str = "vision-engine";
 const LABEL_FONT_SCALE: f64 = 0.6;
@@ -321,7 +321,7 @@ fn hsv_to_bgr(h: f64, s: f64, v: f64) -> (f64, f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vision_engine::tracking::clock::{FrameStamp, TimeSource};
+    use crate::tracking::clock::{FrameStamp, TimeSource};
 
     fn sample_stamp() -> FrameStamp {
         FrameStamp {
@@ -338,7 +338,7 @@ mod tests {
             id: TrackId(id),
             class_id,
             state,
-            bbox: vision_engine::tracking::BBox {
+            bbox: crate::tracking::BBox {
                 x_min: 10.0,
                 y_min: 10.0,
                 x_max: 50.0,

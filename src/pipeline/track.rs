@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
+use crate::tracking::{FrameStamp, Tracker};
 use anyhow::{Context, Result};
-use vision_engine::tracking::{FrameStamp, Tracker};
 
 use super::message::{DetectedFrame, TrackedFrame};
 

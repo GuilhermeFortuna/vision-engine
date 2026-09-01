@@ -3,6 +3,13 @@ name = "vision-engine"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+test-utils = []
+
+[[test]]
+name = "pipeline_liveness"
+required-features = ["test-utils"]
+
 [dependencies]
 anyhow = "1.0.104"
 nalgebra = "0.33"

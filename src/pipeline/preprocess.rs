@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use crate::detector::LetterboxTransform;
 use anyhow::{Context, Result, bail};
 use ndarray::Array4;
 use opencv::{
@@ -7,7 +8,6 @@ use opencv::{
     imgproc,
     prelude::*,
 };
-use vision_engine::detector::LetterboxTransform;
 
 use super::message::{DecodedFrame, PreparedFrame};
 
@@ -138,9 +138,9 @@ pub fn prepare(decoded: DecodedFrame) -> Result<PreparedFrame> {
 mod tests {
     use super::*;
     use crate::pipeline::message::StageTimings;
+    use crate::tracking::clock::{FrameStamp, TimeSource};
     use ndarray::Axis;
     use opencv::core::{CV_8UC3, Mat, Scalar};
-    use vision_engine::tracking::clock::{FrameStamp, TimeSource};
 
     fn sample_stamp() -> FrameStamp {
         FrameStamp {

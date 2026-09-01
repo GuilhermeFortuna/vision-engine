@@ -1,9 +1,11 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use crate::detector::LoadedModel;
 use anyhow::{Context, Result, bail};
-use vision_engine::detector::LoadedModel;
 
 use crate::cli::Config;
 
@@ -14,7 +16,7 @@ use super::metrics::QueueDepths;
 use super::preprocess::prepare;
 use super::queue::{self, QUEUE_CAPACITY, QueueDepthGauge, Receiver, Sender, Shutdown};
 use super::track::TrackStage;
-use vision_engine::tracking::TrackState;
+use crate::tracking::TrackState;
 
 const STAGE_DECODE: &str = "decode";
 const STAGE_PREPROCESS: &str = "preprocess";
@@ -38,6 +40,16 @@ impl Stage {
             Self::Track => STAGE_TRACK,
         }
     }
+
+    fn parse(name: &str) -> Option<Self> {
+        match name {
+            STAGE_DECODE => Some(Self::Decode),
+            STAGE_PREPROCESS => Some(Self::Preprocess),
+            STAGE_INFER => Some(Self::Infer),
+            STAGE_TRACK => Some(Self::Track),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -57,6 +69,76 @@ struct StageHandle<T> {
     join: JoinHandle<Result<T>>,
 }
 
+struct StallState {
+    active: Mutex<Option<(Stage, Instant)>>,
+}
+
+#[cfg_attr(not(any(test, feature = "test-utils")), allow(dead_code))]
+impl StallState {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            active: Mutex::new(None),
+        })
+    }
+
+    fn activate(&self, stage: Stage, delay: Duration) {
+        *self.active.lock().expect("stall state poisoned") = Some((stage, Instant::now() + delay));
+    }
+
+    fn apply(&self, stage: Stage) {
+        let guard = self.active.lock().expect("stall state poisoned");
+        let Some((active_stage, until)) = *guard else {
+            return;
+        };
+        if active_stage != stage {
+            return;
+        }
+        let now = Instant::now();
+        if now < until {
+            let remaining = until - now;
+            drop(guard);
+            thread::sleep(remaining);
+        }
+    }
+}
+
+struct PeakDepthTracker {
+    decoded: AtomicUsize,
+    prepared: AtomicUsize,
+    detected: AtomicUsize,
+    tracked: AtomicUsize,
+}
+
+#[cfg_attr(not(any(test, feature = "test-utils")), allow(dead_code))]
+impl PeakDepthTracker {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            decoded: AtomicUsize::new(0),
+            prepared: AtomicUsize::new(0),
+            detected: AtomicUsize::new(0),
+            tracked: AtomicUsize::new(0),
+        })
+    }
+
+    fn record(&self, depths: &QueueDepths) {
+        self.decoded.fetch_max(depths.decoded.0, Ordering::Relaxed);
+        self.prepared
+            .fetch_max(depths.prepared.0, Ordering::Relaxed);
+        self.detected
+            .fetch_max(depths.detected.0, Ordering::Relaxed);
+        self.tracked.fetch_max(depths.tracked.0, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> QueueDepths {
+        QueueDepths {
+            decoded: (self.decoded.load(Ordering::Relaxed), QUEUE_CAPACITY),
+            prepared: (self.prepared.load(Ordering::Relaxed), QUEUE_CAPACITY),
+            detected: (self.detected.load(Ordering::Relaxed), QUEUE_CAPACITY),
+            tracked: (self.tracked.load(Ordering::Relaxed), QUEUE_CAPACITY),
+        }
+    }
+}
+
 pub struct Pipeline {
     decode: StageHandle<DecodeSummary>,
     preprocess: StageHandle<()>,
@@ -68,20 +150,25 @@ pub struct Pipeline {
     tracked_gauge: QueueDepthGauge<TrackedFrame>,
     tracked_rx: Receiver<TrackedFrame>,
     shutdown: Shutdown,
+    #[cfg_attr(not(any(test, feature = "test-utils")), allow(dead_code))]
+    stall_state: Arc<StallState>,
+    peak_depths: Arc<PeakDepthTracker>,
 }
 
 impl Pipeline {
     pub fn spawn(config: &Config, model: LoadedModel) -> Result<Self> {
-        Self::spawn_with_fault(config, model, FaultConfig::default())
+        Self::spawn_internal(config, model, FaultConfig::default())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn spawn_for_test(config: &Config, model: LoadedModel, fault: FaultConfig) -> Result<Self> {
-        Self::spawn_with_fault(config, model, fault)
+        Self::spawn_internal(config, model, fault)
     }
 
-    fn spawn_with_fault(config: &Config, model: LoadedModel, fault: FaultConfig) -> Result<Self> {
+    fn spawn_internal(config: &Config, model: LoadedModel, fault: FaultConfig) -> Result<Self> {
         let shutdown = Shutdown::new();
+        let stall_state = StallState::new();
+        let peak_depths = PeakDepthTracker::new();
 
         let (decoded_tx, decoded_rx) = queue::bounded::<DecodedFrame>(QUEUE_CAPACITY, &shutdown);
         let (prepared_tx, prepared_rx) = queue::bounded::<PreparedFrame>(QUEUE_CAPACITY, &shutdown);
@@ -100,6 +187,10 @@ impl Pipeline {
         let shutdown_preprocess = shutdown.clone_handle();
         let shutdown_infer = shutdown.clone_handle();
         let shutdown_track = shutdown.clone_handle();
+        let stall_decode = Arc::clone(&stall_state);
+        let stall_preprocess = Arc::clone(&stall_state);
+        let stall_infer = Arc::clone(&stall_state);
+        let stall_track = Arc::clone(&stall_state);
 
         let decode = thread::Builder::new()
             .name(STAGE_DECODE.to_string())
@@ -111,6 +202,7 @@ impl Pipeline {
                     decoded_tx,
                     shutdown_decode,
                     fault,
+                    stall_decode,
                 )
             })
             .context("failed to spawn decode stage thread")?;
@@ -118,18 +210,35 @@ impl Pipeline {
         let preprocess = thread::Builder::new()
             .name(STAGE_PREPROCESS.to_string())
             .spawn(move || {
-                run_preprocess_stage(decoded_rx, prepared_tx, shutdown_preprocess, fault)
+                run_preprocess_stage(
+                    decoded_rx,
+                    prepared_tx,
+                    shutdown_preprocess,
+                    fault,
+                    stall_preprocess,
+                )
             })
             .context("failed to spawn preprocess stage thread")?;
 
         let infer = thread::Builder::new()
             .name(STAGE_INFER.to_string())
-            .spawn(move || run_infer_stage(model, prepared_rx, detected_tx, shutdown_infer, fault))
+            .spawn(move || {
+                run_infer_stage(
+                    model,
+                    prepared_rx,
+                    detected_tx,
+                    shutdown_infer,
+                    fault,
+                    stall_infer,
+                )
+            })
             .context("failed to spawn infer stage thread")?;
 
         let track = thread::Builder::new()
             .name(STAGE_TRACK.to_string())
-            .spawn(move || run_track_stage(detected_rx, tracked_tx, shutdown_track, fault))
+            .spawn(move || {
+                run_track_stage(detected_rx, tracked_tx, shutdown_track, fault, stall_track)
+            })
             .context("failed to spawn track stage thread")?;
 
         Ok(Self {
@@ -155,16 +264,33 @@ impl Pipeline {
             tracked_gauge,
             tracked_rx,
             shutdown,
+            stall_state,
+            peak_depths,
         })
     }
 
     pub fn queue_depths(&self) -> QueueDepths {
-        QueueDepths {
+        let depths = QueueDepths {
             decoded: self.decoded_gauge.snapshot(),
             prepared: self.prepared_gauge.snapshot(),
             detected: self.detected_gauge.snapshot(),
             tracked: self.tracked_gauge.snapshot(),
-        }
+        };
+        self.peak_depths.record(&depths);
+        depths
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn peak_queue_depths(&self) -> QueueDepths {
+        self.peak_depths.snapshot()
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn stall_stage_for(&self, stage: &str, delay: Duration) {
+        let stage = Stage::parse(stage).unwrap_or_else(|| {
+            panic!("unknown stage {stage:?}; expected decode, preprocess, infer, or track")
+        });
+        self.stall_state.activate(stage, delay);
     }
 
     pub fn next_tracked(&self) -> Option<TrackedFrame> {
@@ -298,6 +424,7 @@ fn run_decode_stage(
     tx: Sender<DecodedFrame>,
     shutdown: Shutdown,
     fault: FaultConfig,
+    stall: Arc<StallState>,
 ) -> Result<DecodeSummary> {
     let mut decode = match DecodeStage::open(&video, loop_for, max_frames) {
         Ok(decode) => decode,
@@ -311,6 +438,8 @@ fn run_decode_stage(
         if shutdown.is_requested() {
             break;
         }
+
+        stall.apply(Stage::Decode);
 
         let decoded = match decode.next() {
             Ok(Some(frame)) => frame,
@@ -342,8 +471,11 @@ fn run_preprocess_stage(
     tx: Sender<PreparedFrame>,
     shutdown: Shutdown,
     fault: FaultConfig,
+    stall: Arc<StallState>,
 ) -> Result<()> {
     while let Ok(decoded) = rx.recv() {
+        stall.apply(Stage::Preprocess);
+
         let index = decoded.stamp.index;
         if let Err(err) = check_fault(Stage::Preprocess, index, fault) {
             shutdown.request();
@@ -373,10 +505,13 @@ fn run_infer_stage(
     tx: Sender<DetectedFrame>,
     shutdown: Shutdown,
     fault: FaultConfig,
+    stall: Arc<StallState>,
 ) -> Result<()> {
     let mut infer = InferStage::new(model);
 
     while let Ok(prepared) = rx.recv() {
+        stall.apply(Stage::Infer);
+
         let index = prepared.stamp.index;
         if let Err(err) = check_fault(Stage::Infer, index, fault) {
             shutdown.request();
@@ -405,10 +540,13 @@ fn run_track_stage(
     tx: Sender<TrackedFrame>,
     shutdown: Shutdown,
     fault: FaultConfig,
+    stall: Arc<StallState>,
 ) -> Result<u64> {
     let mut track = TrackStage::new();
 
     while let Ok(detected) = rx.recv() {
+        stall.apply(Stage::Track);
+
         let index = detected.stamp.index;
         if let Err(err) = check_fault(Stage::Track, index, fault) {
             shutdown.request();
@@ -439,23 +577,25 @@ fn run_track_stage(
     Ok(track.rejected_updates())
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support {
     use std::path::PathBuf;
+    use std::time::Duration;
 
-    use super::*;
-    use vision_engine::detector::LoadedModel;
+    use crate::detector::LoadedModel;
 
-    fn repo_root() -> PathBuf {
+    use crate::cli::Config;
+
+    pub fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     }
 
-    fn sample_video() -> Option<PathBuf> {
+    pub fn sample_video() -> Option<PathBuf> {
         let path = repo_root().join("samples/test.mp4");
         path.is_file().then_some(path)
     }
 
-    fn sample_model() -> Option<LoadedModel> {
+    pub fn sample_model() -> Option<LoadedModel> {
         let path = repo_root().join("models/yolov8n.onnx");
         if !path.is_file() {
             return None;
@@ -463,7 +603,7 @@ mod tests {
         LoadedModel::load(&path).ok()
     }
 
-    fn test_config(max_frames: u64) -> Option<Config> {
+    pub fn test_config(max_frames: u64) -> Option<Config> {
         Some(Config {
             video: sample_video()?,
             model: repo_root().join("models/yolov8n.onnx"),
@@ -472,6 +612,22 @@ mod tests {
             max_frames: Some(max_frames),
         })
     }
+
+    pub fn looped_test_config(max_frames: u64) -> Option<Config> {
+        Some(Config {
+            video: sample_video()?,
+            model: repo_root().join("models/yolov8n.onnx"),
+            loop_for: Some(Duration::from_secs(3600)),
+            track_dump: None,
+            max_frames: Some(max_frames),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_support::{sample_model, test_config};
 
     fn drain_pipeline(pipeline: Pipeline) -> (Vec<u64>, Result<PipelineRunStats>) {
         let mut indices = Vec::new();
@@ -629,5 +785,107 @@ mod tests {
         pipeline.request_shutdown();
         let join_result = pipeline.join();
         join_result.expect("early shutdown should join cleanly");
+    }
+
+    #[test]
+    fn shutdown_after_partial_drain_terminates_cleanly() {
+        let Some(config) = test_config(50) else {
+            eprintln!("skipping: samples/test.mp4 or models/yolov8n.onnx not present");
+            return;
+        };
+        let Some(model) = sample_model() else {
+            eprintln!("skipping: models/yolov8n.onnx not present");
+            return;
+        };
+
+        let pipeline = Pipeline::spawn(&config, model).expect("pipeline should spawn");
+        for _ in 0..10 {
+            assert!(pipeline.next_tracked().is_some());
+        }
+        pipeline.request_shutdown();
+        pipeline
+            .join()
+            .expect("mid-run shutdown should join cleanly");
+    }
+
+    #[test]
+    fn shutdown_at_end_of_input_terminates_cleanly() {
+        let Some(config) = test_config(20) else {
+            eprintln!("skipping: samples/test.mp4 or models/yolov8n.onnx not present");
+            return;
+        };
+        let Some(model) = sample_model() else {
+            eprintln!("skipping: models/yolov8n.onnx not present");
+            return;
+        };
+
+        let pipeline = Pipeline::spawn(&config, model).expect("pipeline should spawn");
+        while pipeline.next_tracked().is_some() {}
+        pipeline.request_shutdown();
+        pipeline
+            .join()
+            .expect("end-of-input shutdown should join cleanly");
+    }
+
+    #[test]
+    fn non_fatal_conditions_complete_without_error() {
+        let Some(config) = test_config(100) else {
+            eprintln!("skipping: samples/test.mp4 or models/yolov8n.onnx not present");
+            return;
+        };
+        let Some(model) = sample_model() else {
+            eprintln!("skipping: models/yolov8n.onnx not present");
+            return;
+        };
+
+        let pipeline = Pipeline::spawn(&config, model).expect("pipeline should spawn");
+        let (_indices, join_result) = drain_pipeline(pipeline);
+        let stats = join_result.expect("pipeline should complete without error");
+        assert!(
+            stats.decode_summary.frame_count > 0,
+            "expected frames to be processed"
+        );
+    }
+
+    #[test]
+    fn per_frame_buffer_cost_is_quantified() {
+        let Some(config) = test_config(50) else {
+            eprintln!("skipping: samples/test.mp4 or models/yolov8n.onnx not present");
+            return;
+        };
+        let Some(model) = sample_model() else {
+            eprintln!("skipping: models/yolov8n.onnx not present");
+            return;
+        };
+
+        let pipeline = Pipeline::spawn(&config, model).expect("pipeline should spawn");
+        let mut decode_ms = 0.0;
+        let mut preprocess_ms = 0.0;
+        let mut frame_ms = 0.0;
+        let mut frames = 0_u64;
+
+        while let Some(tracked) = pipeline.next_tracked() {
+            decode_ms += tracked.timings.decode_ms;
+            preprocess_ms += tracked.timings.preprocess_ms;
+            frame_ms += tracked.timings.decode_ms
+                + tracked.timings.preprocess_ms
+                + tracked.timings.inference_ms
+                + tracked.timings.tracking_ms;
+            frames += 1;
+        }
+        pipeline.request_shutdown();
+        pipeline.join().expect("pipeline should join cleanly");
+
+        assert!(frames > 0, "expected frames for allocation measurement");
+        let allocation_ms = decode_ms + preprocess_ms;
+        let mean_frame_ms = frame_ms / frames as f64;
+        let allocation_share = allocation_ms / frames as f64 / mean_frame_ms * 100.0;
+        eprintln!(
+            "per-frame allocation share: {allocation_share:.1}% (decode+preprocess / total stage time)"
+        );
+        assert!(
+            allocation_share.is_finite() && allocation_share > 0.0,
+            "allocation share should be measurable"
+        );
     }
 }

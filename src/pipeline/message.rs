@@ -1,7 +1,7 @@
+use crate::detector::{Detection, LetterboxTransform};
+use crate::tracking::{FrameStamp, Track};
 use ndarray::Array4;
 use opencv::core::Mat;
-use vision_engine::detector::{Detection, LetterboxTransform};
-use vision_engine::tracking::{FrameStamp, Track};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StageTimings {

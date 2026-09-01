@@ -1,11 +1,7 @@
-mod cli;
-mod pipeline;
-
 use std::io::IsTerminal;
 
 use anyhow::Result;
-
-use cli::{ParseOutcome, parse_args, print_usage, validate_config};
+use vision_engine::cli::{ParseOutcome, parse_args, print_usage, validate_config};
 
 const DEFAULT_LOG_FILTER: &str = "info,ort=warn";
 
@@ -30,7 +26,7 @@ fn run() -> Result<()> {
                 model = %config.model.display(),
                 "startup configuration validated"
             );
-            pipeline::run(&config)
+            vision_engine::pipeline::run(&config)
         }
     }
 }

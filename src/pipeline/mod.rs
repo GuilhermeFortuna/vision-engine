@@ -5,22 +5,26 @@ mod metrics;
 mod preprocess;
 mod queue;
 mod render;
-mod runtime;
+pub mod runtime;
 mod track;
 mod track_dump;
 
 use std::time::{Duration, Instant};
 
+use crate::detector::LoadedModel;
+use crate::tracking::TrackState;
 use anyhow::Result;
-use vision_engine::detector::LoadedModel;
-use vision_engine::tracking::TrackState;
 
 use crate::cli::Config;
+
+pub use queue::QUEUE_CAPACITY;
+#[cfg(any(test, feature = "test-utils"))]
+pub use runtime::test_support;
+pub use runtime::{FaultConfig, Pipeline, PipelineRunStats, Stage};
 
 use decode::log_playback_summary;
 use metrics::{FrameMetrics, RollingFps, RunStats, format_depth, log_instrumentation_summary};
 use render::{Presentation, RenderStage};
-use runtime::Pipeline;
 use track_dump::TrackDump;
 
 const INSTRUMENTATION_LOG_INTERVAL: Duration = Duration::from_secs(1);

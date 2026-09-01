@@ -1,11 +1,11 @@
 use std::time::Instant;
 
+use crate::detector::{Detection, LetterboxTransform, LoadedModel};
+use crate::tracking::BBox;
 use anyhow::{Context, Result, bail};
 use ndarray::ArrayView3;
 use ort::inputs;
 use ort::value::{DynValue, Tensor};
-use vision_engine::detector::{Detection, LetterboxTransform, LoadedModel};
-use vision_engine::tracking::BBox;
 
 use super::message::{DetectedFrame, PreparedFrame};
 

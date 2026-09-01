@@ -1,12 +1,12 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::tracking::{FrameClock, FrameStamp, TimeSource};
 use anyhow::{Context, Result, bail};
 use opencv::{
     prelude::*,
     videoio::{self, VideoCapture},
 };
-use vision_engine::tracking::{FrameClock, FrameStamp, TimeSource};
 
 use super::message::{DecodedFrame, StageTimings};
 

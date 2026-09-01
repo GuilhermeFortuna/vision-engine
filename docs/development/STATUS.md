@@ -16,7 +16,7 @@
 | [VE-013](specs/VE-013-frame-messages-and-bounded-queues-spec.md) / [Plan](plans/VE-013-frame-messages-and-bounded-queues-plan.md)               | 03    | `DONE`  | VE-012     | Concrete frame messages and a blocking bounded queue              |
 | [VE-014](specs/VE-014-threaded-pipeline-runtime-spec.md) / [Plan](plans/VE-014-threaded-pipeline-runtime-plan.md)                               | 03    | `DONE`  | VE-013     | Stage threads, backpressure, shutdown, and baseline parity        |
 | [VE-015](specs/VE-015-pipeline-instrumentation-spec.md) / [Plan](plans/VE-015-pipeline-instrumentation-plan.md)                                 | 03    | `DONE`  | VE-014     | Per-stage latency, queue depth, and named bottleneck reporting    |
-| [VE-016](specs/VE-016-milestone-three-hardening-and-acceptance-spec.md) / [Plan](plans/VE-016-milestone-three-hardening-and-acceptance-plan.md) | 03    | `READY` | VE-015     | Verified parity, measured speedup, and Milestone 3 acceptance     |
+| [VE-016](specs/VE-016-milestone-three-hardening-and-acceptance-spec.md) / [Plan](plans/VE-016-milestone-three-hardening-and-acceptance-plan.md) | 03    | `READY` | VE-015     | Automated hardening complete; [acceptance record](baselines/VE-016/acceptance.md) pending manual throughput/soak/visual |
 
 
 Batch 02 implements Milestone 2 (object tracking) with a full SORT tracker:
