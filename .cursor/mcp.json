@@ -1,9 +1,8 @@
 {
   "mcpServers": {
     "semantic-search": {
-      "command": "uv",
-      "args": ["run", "python", "server.py"],
-      "cwd": "tools/semantic-search"
+      "command": "${workspaceFolder}/tools/semantic-search/.venv/bin/python",
+      "args": ["${workspaceFolder}/tools/semantic-search/server.py"]
     }
   }
 }

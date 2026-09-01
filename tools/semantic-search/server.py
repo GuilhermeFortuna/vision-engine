@@ -148,7 +148,15 @@ def build_index() -> list[FunctionChunk]:
     return chunks
 
 
-INDEX = build_index()
+_INDEX: list[FunctionChunk] | None = None
+
+
+def get_index() -> list[FunctionChunk]:
+    global _INDEX
+    if _INDEX is None:
+        _INDEX = build_index()
+    return _INDEX
+
 
 mcp = MCPServer("semantic-search")
 
@@ -161,7 +169,7 @@ def semantic_code_search(query: str, top_k: int = 3) -> list[dict[str, object]]:
 
     query_embedding = embed_text(query)
     ranked = sorted(
-        INDEX,
+        get_index(),
         key=lambda chunk: cosine_similarity(query_embedding, chunk.embedding),
         reverse=True,
     )[:top_k]
