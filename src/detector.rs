@@ -1189,4 +1189,28 @@ mod tests {
         assert!(detections.iter().any(|d| d.class_id == 0));
         assert!(detections.iter().any(|d| d.class_id == 2));
     }
+
+    #[test]
+    fn load_rejects_invalid_onnx_bytes() {
+        let dir = std::env::temp_dir().join(format!(
+            "vision-engine-invalid-onnx-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&dir).expect("failed to create temp dir");
+        let model_path = dir.join("invalid.onnx");
+        std::fs::write(&model_path, b"not an onnx file").expect("failed to write invalid model");
+
+        let err = match YoloV8Detector::load(&model_path) {
+            Ok(_) => panic!("invalid onnx should fail"),
+            Err(err) => err,
+        };
+        let message = err.to_string();
+        assert!(message.contains("failed to load ONNX model"));
+        assert!(message.contains("invalid.onnx"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

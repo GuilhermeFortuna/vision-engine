@@ -191,6 +191,29 @@ fn open_video_capture(path: &Path) -> Result<VideoCapture> {
     Ok(capture)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlaybackFrameOutcome {
+    Continue,
+    EndOfVideo,
+    Undecodable,
+}
+
+fn classify_playback_frame(
+    read_ok: bool,
+    frame_empty: bool,
+    frames_decoded: u32,
+) -> PlaybackFrameOutcome {
+    if read_ok && !frame_empty {
+        return PlaybackFrameOutcome::Continue;
+    }
+
+    if frames_decoded == 0 {
+        PlaybackFrameOutcome::Undecodable
+    } else {
+        PlaybackFrameOutcome::EndOfVideo
+    }
+}
+
 fn should_exit(key: i32) -> bool {
     if key == -1 {
         return false;
@@ -375,10 +398,12 @@ fn run_playback(config: &Config) -> Result<()> {
     highgui::named_window(WINDOW_NAME, highgui::WINDOW_AUTOSIZE)
         .context("failed to create display window")?;
 
+    let video_path = config.video.display().to_string();
     let playback_result = (|| -> Result<()> {
         let mut frame = Mat::default();
         let mut rolling_fps = RollingFps::new();
         let mut last_iteration_end = Instant::now();
+        let mut frames_decoded = 0_u32;
 
         loop {
             let decode_start = Instant::now();
@@ -387,8 +412,12 @@ fn run_playback(config: &Config) -> Result<()> {
                 .context("failed to read video frame")?;
             let decode_ms = decode_start.elapsed().as_secs_f64() * 1000.0;
 
-            if !read_ok || frame.empty() {
-                break;
+            match classify_playback_frame(read_ok, frame.empty(), frames_decoded) {
+                PlaybackFrameOutcome::Continue => {}
+                PlaybackFrameOutcome::EndOfVideo => break,
+                PlaybackFrameOutcome::Undecodable => {
+                    bail!("video file could not be decoded: {video_path}");
+                }
             }
 
             let inference_result = detector.infer(&frame)?;
@@ -397,18 +426,23 @@ fn run_playback(config: &Config) -> Result<()> {
             rolling_fps.record_frame(now.duration_since(last_iteration_end));
             last_iteration_end = now;
 
-            draw_detections(&mut frame, &inference_result.detections)?;
+            draw_detections(&mut frame, &inference_result.detections)
+                .context("failed to draw detection overlays")?;
             draw_metrics_overlay(
                 &mut frame,
                 decode_ms,
                 inference_result.inference_ms,
                 rolling_fps.displayed_fps(),
-            )?;
+            )
+            .context("failed to draw performance metrics overlay")?;
             highgui::imshow(WINDOW_NAME, &frame).context("failed to display video frame")?;
 
-            if should_exit(highgui::wait_key(1)?) {
+            let key = highgui::wait_key(1).context("failed to poll keyboard events")?;
+            if should_exit(key) {
                 break;
             }
+
+            frames_decoded += 1;
         }
 
         Ok(())
@@ -643,5 +677,49 @@ mod tests {
     #[test]
     fn other_key_continues() {
         assert!(!should_exit(65));
+    }
+
+    #[test]
+    fn continue_when_frame_read_succeeds() {
+        assert_eq!(
+            classify_playback_frame(true, false, 0),
+            PlaybackFrameOutcome::Continue
+        );
+        assert_eq!(
+            classify_playback_frame(true, false, 10),
+            PlaybackFrameOutcome::Continue
+        );
+    }
+
+    #[test]
+    fn end_of_video_after_at_least_one_frame() {
+        assert_eq!(
+            classify_playback_frame(false, false, 1),
+            PlaybackFrameOutcome::EndOfVideo
+        );
+        assert_eq!(
+            classify_playback_frame(true, true, 5),
+            PlaybackFrameOutcome::EndOfVideo
+        );
+        assert_eq!(
+            classify_playback_frame(false, true, 3),
+            PlaybackFrameOutcome::EndOfVideo
+        );
+    }
+
+    #[test]
+    fn undecodable_when_no_frames_were_read() {
+        assert_eq!(
+            classify_playback_frame(false, false, 0),
+            PlaybackFrameOutcome::Undecodable
+        );
+        assert_eq!(
+            classify_playback_frame(true, true, 0),
+            PlaybackFrameOutcome::Undecodable
+        );
+        assert_eq!(
+            classify_playback_frame(false, true, 0),
+            PlaybackFrameOutcome::Undecodable
+        );
     }
 }
