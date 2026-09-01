@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use detector::YoloV8Detector;
+use detector::{Detection, YoloV8Detector, coco_class_name};
 use opencv::{
-    core::{Point, Scalar},
+    core::{Point, Rect, Scalar},
     highgui, imgproc,
     prelude::*,
     videoio::{self, VideoCapture},
@@ -16,6 +16,11 @@ use opencv::{
 const DEFAULT_MODEL_PATH: &str = "models/yolov8n.onnx";
 const WINDOW_NAME: &str = "vision-engine";
 const MIN_FPS_WINDOW: Duration = Duration::from_secs(1);
+const LABEL_FONT_SCALE: f64 = 0.6;
+const LABEL_THICKNESS: i32 = 1;
+const LABEL_PADDING: i32 = 4;
+const METRICS_AREA_RIGHT: i32 = 250;
+const METRICS_AREA_BOTTOM: i32 = 100;
 
 #[derive(Debug)]
 struct Config {
@@ -245,6 +250,121 @@ fn draw_metrics_overlay(
     Ok(())
 }
 
+fn draw_detections(frame: &mut Mat, detections: &[Detection]) -> Result<()> {
+    let frame_w = frame.cols();
+    let frame_h = frame.rows();
+    let box_color = Scalar::new(0.0, 255.0, 255.0, 0.0);
+    let label_bg_color = Scalar::new(0.0, 255.0, 255.0, 0.0);
+    let label_text_color = Scalar::new(0.0, 0.0, 0.0, 0.0);
+
+    for detection in detections {
+        let class_name = coco_class_name(detection.class_id).unwrap_or("unknown");
+        let label = format!(
+            "{class_name} {confidence:.2}",
+            confidence = detection.confidence
+        );
+
+        let x_min = detection.x_min.round() as i32;
+        let y_min = detection.y_min.round() as i32;
+        let x_max = detection.x_max.round() as i32;
+        let y_max = detection.y_max.round() as i32;
+
+        let box_left = x_min.clamp(0, frame_w);
+        let box_top = y_min.clamp(0, frame_h);
+        let box_right = x_max.clamp(0, frame_w);
+        let box_bottom = y_max.clamp(0, frame_h);
+
+        if box_right <= box_left || box_bottom <= box_top {
+            continue;
+        }
+
+        imgproc::rectangle(
+            frame,
+            Rect::new(
+                box_left,
+                box_top,
+                box_right - box_left,
+                box_bottom - box_top,
+            ),
+            box_color,
+            2,
+            imgproc::LINE_8,
+            0,
+        )?;
+
+        let mut baseline = 0;
+        let text_size = imgproc::get_text_size(
+            &label,
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            LABEL_FONT_SCALE,
+            LABEL_THICKNESS,
+            &mut baseline,
+        )?;
+        let text_w = text_size.width;
+        let text_h = text_size.height;
+
+        let bg_w = text_w + LABEL_PADDING * 2;
+        let bg_h = text_h + LABEL_PADDING * 2;
+        let mut label_left = box_left;
+        let mut label_top = box_top - bg_h;
+
+        if label_top < 0 {
+            label_top = box_bottom;
+        }
+
+        if label_left + bg_w > frame_w {
+            label_left = frame_w - bg_w;
+        }
+        if label_top + bg_h > frame_h {
+            label_top = frame_h - bg_h;
+        }
+        if label_left < 0 {
+            label_left = 0;
+        }
+        if label_top < 0 {
+            label_top = 0;
+        }
+
+        let label_rect = Rect::new(label_left, label_top, bg_w, bg_h);
+        if label_rect.x < METRICS_AREA_RIGHT && label_rect.y < METRICS_AREA_BOTTOM {
+            label_top = box_bottom;
+            if label_top + bg_h > frame_h {
+                label_top = frame_h - bg_h;
+            }
+            if label_top < 0 {
+                label_top = 0;
+            }
+        }
+
+        imgproc::rectangle(
+            frame,
+            Rect::new(label_left, label_top, bg_w, bg_h),
+            label_bg_color,
+            imgproc::FILLED,
+            imgproc::LINE_8,
+            0,
+        )?;
+
+        let text_origin = Point::new(
+            label_left + LABEL_PADDING,
+            label_top + LABEL_PADDING + text_h,
+        );
+        imgproc::put_text(
+            frame,
+            &label,
+            text_origin,
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            LABEL_FONT_SCALE,
+            label_text_color,
+            LABEL_THICKNESS,
+            imgproc::LINE_8,
+            false,
+        )?;
+    }
+
+    Ok(())
+}
+
 fn destroy_playback_window() -> Result<()> {
     highgui::destroy_window(WINDOW_NAME).context("failed to destroy display window")
 }
@@ -272,13 +392,12 @@ fn run_playback(config: &Config) -> Result<()> {
             }
 
             let inference_result = detector.infer(&frame)?;
-            let _ = inference_result.output;
-            let _ = inference_result.transform;
 
             let now = Instant::now();
             rolling_fps.record_frame(now.duration_since(last_iteration_end));
             last_iteration_end = now;
 
+            draw_detections(&mut frame, &inference_result.detections)?;
             draw_metrics_overlay(
                 &mut frame,
                 decode_ms,
