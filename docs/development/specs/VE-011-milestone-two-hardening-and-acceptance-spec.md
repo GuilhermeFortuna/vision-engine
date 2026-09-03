@@ -75,8 +75,15 @@ is defined so that it passes or fails on a recorded number, not on a judgement c
 
 ### Sustained resource run
 
+- The executable provides in-process replay through `--loop-for-seconds <n>`, which
+  rewinds the source and continues until the elapsed limit is reached. This is the
+  supported way to reach the required duration from a short sample. Relaunching the
+  binary externally would reset resident set size on every restart and measure
+  nothing, so looping belongs inside the process.
+- Replay must preserve monotonic media time across a rewind, so track retention
+  keeps working for the whole run rather than freezing at the first loop boundary.
 - Run the release build continuously for twelve minutes total using a sufficiently
-  long or externally repeated input: a two-minute warm-up followed by a ten-minute
+  long or in-process replayed input: a two-minute warm-up followed by a ten-minute
   measured window. The warm-up is excluded from the pass criteria but is sampled and
   reported like every other interval.
 - Sample every sixty seconds, beginning at the two-minute mark and continuing to the

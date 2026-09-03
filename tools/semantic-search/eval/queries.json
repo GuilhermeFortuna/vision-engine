@@ -1,0 +1,132 @@
+[
+  {
+    "phase": 1,
+    "query": "serial pipeline loop decode infer track",
+    "expected": [
+      {"path": "src/pipeline/runtime.rs", "symbol": "Pipeline"}
+    ]
+  },
+  {
+    "phase": 1,
+    "query": "bounded queue send recv shutdown",
+    "expected": [
+      {"path": "src/pipeline/queue.rs", "symbol": "send"},
+      {"path": "src/pipeline/queue.rs", "symbol": "recv"},
+      {"path": "src/pipeline/queue.rs", "symbol": "bounded"}
+    ]
+  },
+  {
+    "phase": 1,
+    "query": "frame message types stamp timings",
+    "expected": [
+      {"path": "src/pipeline/message.rs", "symbol": "DecodedFrame"},
+      {"path": "src/pipeline/message.rs", "symbol": "StageTimings"}
+    ]
+  },
+  {
+    "phase": 2,
+    "query": "StageTimings decode preprocess inference",
+    "expected": [
+      {"path": "src/pipeline/message.rs", "symbol": "StageTimings"}
+    ]
+  },
+  {
+    "phase": 2,
+    "query": "Shutdown request wake blocked send recv",
+    "expected": [
+      {"path": "src/pipeline/queue.rs", "symbol": "Shutdown"},
+      {"path": "src/pipeline/queue.rs", "symbol": "send"},
+      {"path": "src/pipeline/queue.rs", "symbol": "recv"}
+    ]
+  },
+  {
+    "phase": 2,
+    "query": "OpenCV Mat ownership between threads",
+    "expected": [
+      {"path": "src/pipeline/message.rs", "symbol": "DecodedFrame"}
+    ]
+  },
+  {
+    "phase": 3,
+    "query": "VE-013 frame messages bounded queues",
+    "expected": [
+      {"path": "docs/development/specs/VE-013-frame-messages-and-bounded-queues-spec.md"},
+      {"path": "docs/development/plans/VE-013-frame-messages-and-bounded-queues-plan.md"}
+    ]
+  },
+  {
+    "phase": 3,
+    "query": "VE-014 threaded pipeline shutdown",
+    "expected": [
+      {"path": "docs/development/specs/VE-014-threaded-pipeline-runtime-spec.md"},
+      {"path": "docs/development/plans/VE-014-threaded-pipeline-runtime-plan.md"},
+      {"path": "src/pipeline/queue.rs", "symbol": "Shutdown"}
+    ]
+  },
+  {
+    "phase": 4,
+    "query": "threaded pipeline runtime stage threads spawn",
+    "expected": [
+      {"path": "src/pipeline/runtime.rs", "symbol": "spawn"}
+    ]
+  },
+  {
+    "phase": 4,
+    "query": "shutdown cascade stage threads join",
+    "expected": [
+      {"path": "src/pipeline/runtime.rs", "symbol": "request_shutdown"},
+      {"path": "src/pipeline/runtime.rs", "symbol": "join"}
+    ]
+  },
+  {
+    "phase": 4,
+    "query": "next_tracked playback loop pipeline",
+    "expected": [
+      {"path": "src/pipeline/runtime.rs", "symbol": "next_tracked"}
+    ]
+  },
+  {
+    "phase": 4,
+    "query": "FaultConfig induced failure stage panic",
+    "expected": [
+      {"path": "src/pipeline/runtime.rs", "symbol": "FaultConfig"}
+    ]
+  },
+  {
+    "phase": 5,
+    "top_k": 8,
+    "query": "VE-015 pipeline instrumentation RunStats overlay",
+    "expected": [
+      {"path": "docs/development/specs/VE-015-pipeline-instrumentation-spec.md"},
+      {"path": "src/pipeline/metrics.rs", "symbol": "RunStats"},
+      {"path": "scripts/sustained-run.sh", "symbol": "sustained-run"}
+    ]
+  },
+  {
+    "phase": 5,
+    "top_k": 8,
+    "query": "METRICS_AREA_BOTTOM overlay draw metrics",
+    "expected": [
+      {"path": "src/pipeline/render.rs", "symbol": "METRICS_AREA_BOTTOM"},
+      {"path": "src/pipeline/render.rs", "symbol": "draw_metrics_overlay"}
+    ]
+  },
+  {
+    "phase": 5,
+    "top_k": 8,
+    "query": "sustained-run instrumentation columns csv",
+    "path_prefix": "scripts/",
+    "expected": [
+      {"path": "scripts/sustained-run.sh", "symbol": "sustained-run"}
+    ]
+  },
+  {
+    "phase": 5,
+    "top_k": 8,
+    "query": "Where are StageTimings measured pipeline messages",
+    "expected": [
+      {"path": "src/pipeline/message.rs", "symbol": "StageTimings"},
+      {"path": "src/pipeline/message.rs", "symbol": "TrackedFrame"}
+    ]
+  }
+]

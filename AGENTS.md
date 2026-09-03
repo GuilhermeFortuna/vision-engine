@@ -46,6 +46,43 @@ Do not infer milestone progression or begin follow-up work unless explicitly req
 
 ---
 
+## Semantic Code Search
+
+Use the local semantic code-search MCP for **conceptual and architecture** questions before broad repository exploration.
+
+Tools:
+
+- `semantic_code_search` — hybrid retrieval over Rust code and development docs
+- `task_context` — VE spec/plan sections plus related code for a task id (use `ve_id`, e.g. `VE-014`; `task_id` is an alias)
+- `reindex` — force a full index rebuild after large refactors
+
+Default behavior:
+
+- For architecture, stage boundaries, or “where does X happen?” questions, call `semantic_code_search` first with `top_k=8`.
+- For numbered `VE-...` tasks, call `task_context(ve_id="VE-013")` before reading specs manually.
+- During implementation, use `path_prefix` (e.g. `src/pipeline/`) to reduce noise in search results.
+- When you already know the symbol, path, or filename, use grep or direct file reads instead.
+- Verify hits using `line_start` / `line_end` and inspect call sites before treating results as authoritative.
+
+Search tools return a wrapped response with `results`, `index` metadata, and (for `task_context`) a `touchpoints` field listing plan-named files and symbols. Check `index.reindexed` and `index.files_changed_since_index` during active implementation — the index auto-rebuilds when tracked files change, but grep/read remain authoritative once symbols are known.
+
+After `task_context(ve_id="VE-...")`:
+
+1. Grep `touchpoints.symbols` and `touchpoints.files` from the response (or the plan Interfaces section).
+2. Run at most 1–2 `semantic_code_search` calls for architecture questions, using `path_prefix`.
+3. Switch to grep/read for implementation; do not repeat semantic search for known symbols.
+
+Do not treat MCP results as authoritative by themselves. Verify surrounding code when correctness depends on call sites, types, configuration, or cross-function behavior.
+
+Do not use semantic search for:
+
+- exact filename or path lookups
+- exact symbol searches when the symbol name is already known
+
+The tool indexes production Rust items under `src/**/*.rs` (functions, structs, enums, impls, consts), shell scripts under `scripts/**/*.sh`, VE specs/plans under `docs/development/`, plus `AGENTS.md` and `PROJECT.md`. Test-only code is excluded. Embeddings use the local Ollama model `qwen3-embedding:4b`.
+
+---
+
 ## VE Tasks
 
 When working on a numbered Vision Engine task (`VE-...`):

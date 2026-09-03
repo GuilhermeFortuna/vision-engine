@@ -1,5 +1,9 @@
 /target
-samples/test.mp4
+samples/*.mp4
 models/*.onnx
 models/*.pt
 .venv-export/
+__pycache__/
+*.pyc
+tools/semantic-search/.cache/
+tools/semantic-search/.venv/

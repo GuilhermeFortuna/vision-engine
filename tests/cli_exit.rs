@@ -17,25 +17,51 @@ fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_vision-engine"))
 }
 
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn sample_video() -> Option<PathBuf> {
+    let path = repo_root().join("samples/test.mp4");
+    path.is_file().then_some(path)
+}
+
+fn sample_model() -> Option<PathBuf> {
+    let path = repo_root().join("models/yolov8n.onnx");
+    path.is_file().then_some(path)
+}
+
+fn assert_no_backtrace(stderr: &str) {
+    assert!(
+        !stderr.contains("stack backtrace"),
+        "expected no backtrace in stderr unless RUST_BACKTRACE is set: {stderr}"
+    );
+}
+
+fn run_command(args: &[&str]) -> std::process::Output {
+    let mut command = Command::new(bin());
+    command.env_remove("RUST_BACKTRACE");
+    for arg in args {
+        command.arg(arg);
+    }
+    command.output().expect("failed to run vision-engine")
+}
+
 #[test]
 fn help_exits_successfully() {
-    let output = Command::new(bin())
-        .arg("--help")
-        .output()
-        .expect("failed to run vision-engine");
+    let output = run_command(&["--help"]);
 
     assert!(output.status.success());
 }
 
 #[test]
 fn missing_video_exits_with_error() {
-    let output = Command::new(bin())
-        .output()
-        .expect("failed to run vision-engine");
+    let output = run_command(&[]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("<video>"));
+    assert_no_backtrace(&stderr);
 }
 
 #[test]
@@ -45,12 +71,11 @@ fn missing_video_file_exits_with_error() {
     fs::write(&model, b"model stub").expect("failed to write model stub");
 
     let missing_video = dir.join("missing.mp4");
-    let output = Command::new(bin())
-        .arg(&missing_video)
-        .arg("--model")
-        .arg(&model)
-        .output()
-        .expect("failed to run vision-engine");
+    let output = run_command(&[
+        &missing_video.to_string_lossy(),
+        "--model",
+        &model.to_string_lossy(),
+    ]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -62,6 +87,25 @@ fn missing_video_file_exits_with_error() {
         stderr.contains(&*missing_video.to_string_lossy()),
         "expected the offending path in the error, got: {stderr}"
     );
+    assert_no_backtrace(&stderr);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn directory_as_video_exits_with_error() {
+    let dir = unique_temp_dir("cli-directory-video");
+    let model = dir.join("model.onnx");
+    fs::write(&model, b"model stub").expect("failed to write model stub");
+
+    let output = run_command(&[&dir.to_string_lossy(), "--model", &model.to_string_lossy()]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("video"),
+        "expected video role in error, got: {stderr}"
+    );
+    assert_no_backtrace(&stderr);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -77,12 +121,11 @@ fn invalid_onnx_exits_with_error() {
     let video = dir.join("stub.mp4");
     fs::write(&video, b"stub video").expect("failed to write stub video");
 
-    let output = Command::new(bin())
-        .arg(&video)
-        .arg("--model")
-        .arg(&model)
-        .output()
-        .expect("failed to run vision-engine");
+    let output = run_command(&[
+        &video.to_string_lossy(),
+        "--model",
+        &model.to_string_lossy(),
+    ]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -90,8 +133,34 @@ fn invalid_onnx_exits_with_error() {
         stderr.contains("failed to load ONNX model"),
         "expected ONNX load error, got: {stderr}"
     );
+    assert_no_backtrace(&stderr);
 
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn natural_end_of_input_exits_successfully_with_max_frames() {
+    let Some(video) = sample_video() else {
+        eprintln!("skipping: samples/test.mp4 not present");
+        return;
+    };
+    let Some(model) = sample_model() else {
+        eprintln!("skipping: models/yolov8n.onnx not present");
+        return;
+    };
+
+    let output = run_command(&[
+        &video.to_string_lossy(),
+        "--model",
+        &model.to_string_lossy(),
+        "--max-frames",
+        "5",
+    ]);
+    assert!(
+        output.status.success(),
+        "natural end should exit successfully: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 // Requires a real YOLOv8n ONNX model, so it is opt-in rather than silently skipped:
@@ -111,12 +180,7 @@ fn undecodable_video_exits_with_error_when_model_is_valid() {
     let video = dir.join("undecodable.mp4");
     fs::write(&video, b"not a video file").expect("failed to write undecodable video");
 
-    let output = Command::new(bin())
-        .arg(&video)
-        .arg("--model")
-        .arg(&model_path)
-        .output()
-        .expect("failed to run vision-engine");
+    let output = run_command(&[&video.to_string_lossy(), "--model", &model_path]);
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -124,6 +188,7 @@ fn undecodable_video_exits_with_error_when_model_is_valid() {
         stderr.contains("could not be decoded") || stderr.contains("failed to open video"),
         "expected decode/open error, got: {stderr}"
     );
+    assert_no_backtrace(&stderr);
 
     let _ = fs::remove_dir_all(&dir);
 }
