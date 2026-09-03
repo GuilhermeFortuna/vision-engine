@@ -37,6 +37,7 @@ pub fn run(config: &Config) -> Result<()> {
     let mut last_iteration_end = Instant::now();
     let mut run_stats = RunStats::new();
     let mut last_instrumentation_log = None;
+    let mut last_render_ms: Option<f64> = None;
     let run_started = Instant::now();
     let mut track_dump = config
         .track_dump
@@ -67,7 +68,8 @@ pub fn run(config: &Config) -> Result<()> {
         let frame_count = tracked.stamp.index + 1;
         let metrics = FrameMetrics {
             timings: tracked.timings,
-            render_ms: 0.0,
+            // Overlay shows the prior frame's measured render time (or unavailable).
+            render_ms: last_render_ms.unwrap_or(f64::NAN),
             queue_depths,
             fps: rolling_fps.displayed_fps(),
             confirmed_tracks,
@@ -76,6 +78,7 @@ pub fn run(config: &Config) -> Result<()> {
         let render_start = Instant::now();
         let presentation = render.present(tracked, &metrics);
         let render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+        last_render_ms = Some(render_ms);
 
         let now = Instant::now();
         rolling_fps.record_frame(now.duration_since(last_iteration_end));

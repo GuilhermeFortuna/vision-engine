@@ -187,7 +187,10 @@ pub fn draw_metrics_overlay(frame: &mut Mat, metrics: &FrameMetrics) -> Result<(
             "Tracking: {} ms",
             format_ms(Some(metrics.timings.tracking_ms))
         ),
-        format!("Render: {} ms", format_ms(Some(metrics.render_ms))),
+        format!(
+            "Render (prev): {} ms",
+            format_ms(metrics.render_ms.is_finite().then_some(metrics.render_ms))
+        ),
         format!(
             "Decoded: {}",
             format_depth(

@@ -62,7 +62,13 @@ pub fn associate(tracks: &[(u32, BBox)], detections: &[Detection], iou_gate: f32
             continue;
         }
 
-        let cost_matrix = build_cost_matrix(tracks, detections, &track_indices, &detection_indices);
+        let cost_matrix = build_cost_matrix(
+            tracks,
+            detections,
+            &track_indices,
+            &detection_indices,
+            iou_gate,
+        );
         let local_assignment = solve_assignment(&cost_matrix);
         let mut matched_local_tracks = std::collections::BTreeSet::new();
         let mut matched_local_detections = std::collections::BTreeSet::new();
@@ -77,6 +83,8 @@ pub fn associate(tracks: &[(u32, BBox)], detections: &[Detection], iou_gate: f32
             let detection_box = detections[detection_idx].bbox;
             let iou = track_box.iou(&detection_box);
 
+            // Below-gate edges are already excluded from the cost matrix; re-check
+            // here so floating-point edge cases still report unmatched.
             if iou > iou_gate {
                 matches.push((track_idx, detection_idx));
             } else {
@@ -109,9 +117,15 @@ pub fn associate(tracks: &[(u32, BBox)], detections: &[Detection], iou_gate: f32
     }
 }
 
-fn association_cost(track_box: &BBox, detection_box: &BBox) -> f32 {
+fn association_cost(track_box: &BBox, detection_box: &BBox, iou_gate: f32) -> f32 {
     let iou = track_box.iou(detection_box);
-    if iou.is_finite() { 1.0 - iou } else { 1.0 }
+    if iou.is_finite() && iou > iou_gate {
+        1.0 - iou
+    } else {
+        // Keep invalid pairs strictly above any in-gate cost so Hungarian cannot
+        // prefer two below-gate matches over one valid match.
+        PAD_COST
+    }
 }
 
 fn build_cost_matrix(
@@ -119,6 +133,7 @@ fn build_cost_matrix(
     detections: &[Detection],
     track_indices: &[usize],
     detection_indices: &[usize],
+    iou_gate: f32,
 ) -> Vec<Vec<f32>> {
     track_indices
         .iter()
@@ -126,7 +141,11 @@ fn build_cost_matrix(
             detection_indices
                 .iter()
                 .map(|&detection_idx| {
-                    association_cost(&tracks[track_idx].1, &detections[detection_idx].bbox)
+                    association_cost(
+                        &tracks[track_idx].1,
+                        &detections[detection_idx].bbox,
+                        iou_gate,
+                    )
                 })
                 .collect()
         })
@@ -319,6 +338,23 @@ mod tests {
         }
     }
 
+    fn bbox_xyxy(x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> BBox {
+        BBox {
+            x_min,
+            y_min,
+            x_max,
+            y_max,
+        }
+    }
+
+    fn detection_xyxy(class_id: u32, x_min: f32, y_min: f32, x_max: f32, y_max: f32) -> Detection {
+        Detection {
+            class_id,
+            confidence: 1.0,
+            bbox: bbox_xyxy(x_min, y_min, x_max, y_max),
+        }
+    }
+
     #[test]
     fn solver_beats_greedy_row_assignment_on_three_by_three() {
         let cost = vec![
@@ -494,6 +530,45 @@ mod tests {
         assert!(result.matches.is_empty());
         assert_eq!(result.unmatched_tracks, vec![0, 1]);
         assert_eq!(result.unmatched_detections, vec![0, 1]);
+    }
+
+    #[test]
+    fn associate_prefers_one_in_gate_match_over_two_below_gate() {
+        // Without pre-gating, Hungarian can pick two below-gate pairs whose
+        // combined (1 - IoU) beats one valid match plus a poor leftover.
+        let tracks = vec![
+            (0, bbox_xyxy(0.0, 0.0, 20.0, 20.0)),
+            (0, bbox_xyxy(9.3, 0.0, 29.3, 20.0)),
+        ];
+        let detections = vec![
+            detection_xyxy(0, 2.6, 0.0, 22.6, 20.0),
+            detection_xyxy(0, 0.0, 6.7, 20.0, 26.7),
+        ];
+
+        let gate = 0.50;
+        let iou_00 = tracks[0].1.iou(&detections[0].bbox);
+        let iou_01 = tracks[0].1.iou(&detections[1].bbox);
+        let iou_10 = tracks[1].1.iou(&detections[0].bbox);
+        let iou_11 = tracks[1].1.iou(&detections[1].bbox);
+
+        assert!(iou_00 > gate, "T0-D0 must be in-gate ({iou_00})");
+        assert!(iou_01 <= gate, "T0-D1 must be below gate ({iou_01})");
+        assert!(iou_10 <= gate, "T1-D0 must be below gate ({iou_10})");
+        assert!(iou_11 <= gate, "T1-D1 must be below gate ({iou_11})");
+
+        let ungated_cross = (1.0 - iou_01) + (1.0 - iou_10);
+        let ungated_diag = (1.0 - iou_00) + (1.0 - iou_11);
+        assert!(
+            ungated_cross < ungated_diag,
+            "setup must make the two below-gate pairs cheaper without pre-gating \
+             (cross={ungated_cross}, diag={ungated_diag})"
+        );
+
+        let result = associate(&tracks, &detections, gate);
+        assert_total_coverage(tracks.len(), detections.len(), &result);
+        assert_eq!(result.matches, vec![(0, 0)]);
+        assert_eq!(result.unmatched_tracks, vec![1]);
+        assert_eq!(result.unmatched_detections, vec![1]);
     }
 
     #[test]

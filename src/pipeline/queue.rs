@@ -7,14 +7,38 @@ pub const QUEUE_CAPACITY: usize = 2;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Disconnected;
 
-struct QueueWake {
+struct QueueInner<T> {
+    items: VecDeque<T>,
+    sender_count: usize,
+    receiver_count: usize,
+}
+
+/// Type-erased wake target so shutdown can lock the same mutex waiters use.
+trait QueueWaker: Send + Sync {
+    fn wake_all(&self);
+}
+
+struct Shared<T> {
+    inner: Mutex<QueueInner<T>>,
     not_empty: Condvar,
     not_full: Condvar,
+    shutdown: Shutdown,
+    capacity: usize,
+}
+
+impl<T: Send> QueueWaker for Shared<T> {
+    fn wake_all(&self) {
+        // Hold the wait mutex while notifying so a waiter cannot miss the signal
+        // between checking a predicate and entering `wait`.
+        let _guard = self.inner.lock().expect("queue mutex poisoned");
+        self.not_empty.notify_all();
+        self.not_full.notify_all();
+    }
 }
 
 struct ShutdownInner {
     flag: AtomicBool,
-    queue_wakes: Mutex<Vec<Weak<QueueWake>>>,
+    waiters: Mutex<Vec<Weak<dyn QueueWaker>>>,
 }
 
 pub struct Shutdown {
@@ -26,17 +50,16 @@ impl Shutdown {
         Self {
             inner: Arc::new(ShutdownInner {
                 flag: AtomicBool::new(false),
-                queue_wakes: Mutex::new(Vec::new()),
+                waiters: Mutex::new(Vec::new()),
             }),
         }
     }
 
     pub fn request(&self) {
         self.inner.flag.store(true, Ordering::SeqCst);
-        let wakes = self.inner.queue_wakes.lock().expect("queue wakes poisoned");
-        for wake in wakes.iter().filter_map(Weak::upgrade) {
-            wake.not_empty.notify_all();
-            wake.not_full.notify_all();
+        let waiters = self.inner.waiters.lock().expect("queue waiters poisoned");
+        for waiter in waiters.iter().filter_map(Weak::upgrade) {
+            waiter.wake_all();
         }
     }
 
@@ -50,20 +73,11 @@ impl Shutdown {
         }
     }
 
-    fn register_queue_wake(&self, wake: &Arc<QueueWake>) {
-        let mut wakes = self.inner.queue_wakes.lock().expect("queue wakes poisoned");
-        wakes.retain(|existing| existing.strong_count() > 0);
-        wakes.push(Arc::downgrade(wake));
+    fn register_waker(&self, waker: &Arc<dyn QueueWaker>) {
+        let mut waiters = self.inner.waiters.lock().expect("queue waiters poisoned");
+        waiters.retain(|existing| existing.strong_count() > 0);
+        waiters.push(Arc::downgrade(waker));
     }
-}
-
-struct Shared<T> {
-    queue: Mutex<VecDeque<T>>,
-    wake: Arc<QueueWake>,
-    sender_count: Mutex<usize>,
-    receiver_count: Mutex<usize>,
-    shutdown: Shutdown,
-    capacity: usize,
 }
 
 pub struct Sender<T> {
@@ -83,9 +97,10 @@ impl<T> QueueDepthGauge<T> {
     pub fn snapshot(&self) -> (usize, usize) {
         let depth = self
             .shared
-            .queue
+            .inner
             .lock()
             .expect("queue mutex poisoned")
+            .items
             .len();
         (depth, self.shared.capacity)
     }
@@ -99,21 +114,24 @@ impl<T> Receiver<T> {
     }
 }
 
-pub fn bounded<T>(capacity: usize, shutdown: &Shutdown) -> (Sender<T>, Receiver<T>) {
-    let wake = Arc::new(QueueWake {
+pub fn bounded<T: Send + 'static>(
+    capacity: usize,
+    shutdown: &Shutdown,
+) -> (Sender<T>, Receiver<T>) {
+    let shared = Arc::new(Shared {
+        inner: Mutex::new(QueueInner {
+            items: VecDeque::with_capacity(capacity),
+            sender_count: 1,
+            receiver_count: 1,
+        }),
         not_empty: Condvar::new(),
         not_full: Condvar::new(),
-    });
-    shutdown.register_queue_wake(&wake);
-
-    let shared = Arc::new(Shared {
-        queue: Mutex::new(VecDeque::with_capacity(capacity)),
-        wake,
-        sender_count: Mutex::new(1),
-        receiver_count: Mutex::new(1),
         shutdown: shutdown.clone_handle(),
         capacity,
     });
+
+    let waker: Arc<dyn QueueWaker> = Arc::clone(&shared) as Arc<dyn QueueWaker>;
+    shutdown.register_waker(&waker);
 
     (
         Sender {
@@ -126,32 +144,26 @@ pub fn bounded<T>(capacity: usize, shutdown: &Shutdown) -> (Sender<T>, Receiver<
 impl<T> Sender<T> {
     pub fn send(&self, item: T) -> Result<(), Disconnected> {
         let shared = &self.shared;
-        let mut queue = shared.queue.lock().expect("queue mutex poisoned");
+        let mut inner = shared.inner.lock().expect("queue mutex poisoned");
 
         loop {
             if shared.shutdown.is_requested() {
                 return Err(Disconnected);
             }
 
-            if *shared
-                .receiver_count
-                .lock()
-                .expect("receiver count poisoned")
-                == 0
-            {
+            if inner.receiver_count == 0 {
                 return Err(Disconnected);
             }
 
-            if queue.len() < shared.capacity {
-                queue.push_back(item);
-                shared.wake.not_empty.notify_one();
+            if inner.items.len() < shared.capacity {
+                inner.items.push_back(item);
+                shared.not_empty.notify_one();
                 return Ok(());
             }
 
-            queue = shared
-                .wake
+            inner = shared
                 .not_full
-                .wait(queue)
+                .wait(inner)
                 .expect("not_full condvar poisoned");
         }
     }
@@ -160,11 +172,11 @@ impl<T> Sender<T> {
 impl<T> Receiver<T> {
     pub fn recv(&self) -> Result<T, Disconnected> {
         let shared = &self.shared;
-        let mut queue = shared.queue.lock().expect("queue mutex poisoned");
+        let mut inner = shared.inner.lock().expect("queue mutex poisoned");
 
         loop {
-            if let Some(item) = queue.pop_front() {
-                shared.wake.not_full.notify_one();
+            if let Some(item) = inner.items.pop_front() {
+                shared.not_full.notify_one();
                 return Ok(item);
             }
 
@@ -172,14 +184,13 @@ impl<T> Receiver<T> {
                 return Err(Disconnected);
             }
 
-            if *shared.sender_count.lock().expect("sender count poisoned") == 0 {
+            if inner.sender_count == 0 {
                 return Err(Disconnected);
             }
 
-            queue = shared
-                .wake
+            inner = shared
                 .not_empty
-                .wait(queue)
+                .wait(inner)
                 .expect("not_empty condvar poisoned");
         }
     }
@@ -187,9 +198,10 @@ impl<T> Receiver<T> {
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn len(&self) -> usize {
         self.shared
-            .queue
+            .inner
             .lock()
             .expect("queue mutex poisoned")
+            .items
             .len()
     }
 
@@ -202,27 +214,20 @@ impl<T> Receiver<T> {
 impl<T> Drop for Sender<T> {
     fn drop(&mut self) {
         let shared = &self.shared;
-        let mut sender_count = shared.sender_count.lock().expect("sender count poisoned");
-        *sender_count = sender_count.saturating_sub(1);
-        drop(sender_count);
-
-        shared.wake.not_empty.notify_all();
-        shared.wake.not_full.notify_all();
+        let mut inner = shared.inner.lock().expect("queue mutex poisoned");
+        inner.sender_count = inner.sender_count.saturating_sub(1);
+        shared.not_empty.notify_all();
+        shared.not_full.notify_all();
     }
 }
 
 impl<T> Drop for Receiver<T> {
     fn drop(&mut self) {
         let shared = &self.shared;
-        let mut receiver_count = shared
-            .receiver_count
-            .lock()
-            .expect("receiver count poisoned");
-        *receiver_count = receiver_count.saturating_sub(1);
-        drop(receiver_count);
-
-        shared.wake.not_empty.notify_all();
-        shared.wake.not_full.notify_all();
+        let mut inner = shared.inner.lock().expect("queue mutex poisoned");
+        inner.receiver_count = inner.receiver_count.saturating_sub(1);
+        shared.not_empty.notify_all();
+        shared.not_full.notify_all();
     }
 }
 
@@ -232,6 +237,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
     use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn recv_blocks_until_an_item_arrives_and_preserves_order() {
@@ -350,5 +356,25 @@ mod tests {
 
         assert_eq!(rx.recv().unwrap(), 1);
         assert_eq!(rx.len(), 2);
+    }
+
+    #[test]
+    fn dropping_last_sender_unblocks_empty_receiver() {
+        // Stress the check/wait race: receiver must not hang when the last sender
+        // drops while the queue is empty.
+        for _ in 0..200 {
+            let shutdown = Shutdown::new();
+            let (tx, rx) = bounded::<u32>(2, &shutdown);
+            let receiver = thread::spawn(move || rx.recv());
+            thread::sleep(Duration::from_micros(50));
+            drop(tx);
+            assert_eq!(
+                receiver
+                    .join()
+                    .expect("receiver thread panicked")
+                    .expect_err("receiver should disconnect"),
+                Disconnected
+            );
+        }
     }
 }
